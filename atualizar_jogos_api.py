@@ -2,8 +2,8 @@ import json
 import re
 import requests
 import unicodedata
-from datetime import datetime
 import os
+from datetime import datetime
 
 try:
     from config import API_FOOTBALL_KEY as LOCAL_API_KEY
@@ -21,87 +21,56 @@ HEADERS = {
 
 
 # ============================================================
-# TIMES FORTES / OFENSIVOS PARA CANTOS E BUILDERS
+# TIMES FORTES / OFENSIVOS
 # ============================================================
 
 FAVORITOS_CANTOS = [
-    "Manchester City",
-    "Manchester United",
-    "Liverpool",
-    "Arsenal",
-    "Chelsea",
-    "Tottenham",
-    "Newcastle",
+    "Manchester City", "Manchester United", "Liverpool", "Arsenal",
+    "Chelsea", "Tottenham", "Newcastle",
 
-    "Bayern Munich",
-    "Bayern München",
-    "Borussia Dortmund",
-    "RB Leipzig",
-    "Bayer Leverkusen",
+    "Bayern Munich", "Bayern München", "Borussia Dortmund",
+    "RB Leipzig", "Bayer Leverkusen",
 
-    "Real Madrid",
-    "Barcelona",
-    "Atletico Madrid",
-    "Atlético Madrid",
+    "Real Madrid", "Barcelona", "Atletico Madrid", "Atlético Madrid",
 
-    "Paris Saint Germain",
-    "PSG",
-    "Marseille",
-    "Lyon",
-    "Monaco",
+    "Paris Saint Germain", "PSG", "Marseille", "Lyon", "Monaco",
+    "Lille", "Nice", "Rennes",
 
-    "Benfica",
-    "Sporting CP",
-    "Sporting Lisbon",
-    "FC Porto",
-    "Porto",
+    "Benfica", "Sporting CP", "Sporting Lisbon", "FC Porto", "Porto",
 
-    "Ajax",
-    "PSV Eindhoven",
-    "Feyenoord",
+    "Ajax", "PSV Eindhoven", "Feyenoord",
 
-    "Club Brugge",
-    "Anderlecht",
+    "Club Brugge", "Anderlecht", "Genk", "Union Saint-Gilloise",
 
-    "Galatasaray",
-    "Fenerbahce",
-    "Fenerbahçe",
-    "Besiktas",
-    "Beşiktaş",
+    "Galatasaray", "Fenerbahce", "Fenerbahçe", "Besiktas", "Beşiktaş",
 
-    "Juventus",
-    "Inter",
-    "Inter Milan",
-    "Internazionale",
-    "AC Milan",
-    "Napoli",
-    "Roma",
-    "Lazio",
+    "Juventus", "Inter", "Inter Milan", "Internazionale",
+    "AC Milan", "Napoli", "Roma", "Lazio", "Atalanta",
 
-    "Flamengo",
-    "Palmeiras",
-    "Botafogo",
-    "Fluminense",
-    "São Paulo",
-    "Sao Paulo",
-    "Corinthians",
-    "Atlético Mineiro",
-    "Atletico Mineiro",
-    "Cruzeiro",
-    "Grêmio",
-    "Gremio",
-    "Internacional",
+    "Flamengo", "Palmeiras", "Botafogo", "Fluminense",
+    "São Paulo", "Sao Paulo", "Corinthians",
+    "Atlético Mineiro", "Atletico Mineiro",
+    "Cruzeiro", "Grêmio", "Gremio", "Internacional",
+    "Athletico Paranaense", "Bragantino", "Fortaleza", "Vasco da Gama",
+    "Santos", "Ceará", "Ceara", "Sport Recife", "Sport",
 
-    "Inter Miami",
-    "Los Angeles FC",
-    "LAFC",
-    "Columbus Crew",
-    "Cincinnati"
+    "Inter Miami", "Los Angeles FC", "LAFC", "Columbus Crew", "Cincinnati"
+]
+
+
+RESULTADOS_FAVORITOS = [
+    "Arsenal", "Barcelona", "Real Madrid", "Paris Saint Germain", "PSG",
+    "FC Porto", "Porto", "Palmeiras", "Flamengo", "Botafogo",
+    "Athletico Paranaense", "Bragantino", "São Paulo", "Sao Paulo",
+    "Aston Villa", "Como", "Cremonese", "AC Milan", "Lyon", "Lille",
+    "Monaco", "Bayern Munich", "Bayern München", "Manchester City",
+    "Liverpool", "Benfica", "Sporting CP", "Fenerbahçe", "Fenerbahce",
+    "Galatasaray", "Inter Miami", "Cincinnati", "Los Angeles FC", "LAFC"
 ]
 
 
 # ============================================================
-# JOGADORES ESPECIAIS — ESTRATÉGIA C
+# JOGADORES ESPECIAIS — C1
 # ============================================================
 
 TIMES_JOGADORES_ESPECIAIS = {
@@ -157,7 +126,7 @@ TIMES_JOGADORES_ESPECIAIS = {
 
 
 # ============================================================
-# FUNÇÕES DE TEXTO
+# TEXTO / NORMALIZAÇÃO
 # ============================================================
 
 def normalizar(texto):
@@ -169,16 +138,35 @@ def normalizar(texto):
     return texto.lower().strip()
 
 
+def eh_time_exato(nome_time, referencia):
+    return normalizar(nome_time) == normalizar(referencia)
+
+
+def contem_time(nome_time, lista_times):
+    for t in lista_times:
+        if eh_time_exato(nome_time, t):
+            return True
+    return False
+
+
+def eh_favorito(nome_time):
+    return contem_time(nome_time, FAVORITOS_CANTOS)
+
+
+def eh_favorito_resultado(nome_time):
+    return contem_time(nome_time, RESULTADOS_FAVORITOS)
+
+
+def adicionar_sem_duplicar(lista, item):
+    if item not in lista:
+        lista.append(item)
+
+
+# ============================================================
+# BLOQUEIO DE BASE / RESERVAS
+# ============================================================
+
 def eh_sub_ou_reserva(nome):
-    """
-    Bloqueia:
-    - U18, U19, U20, U21, U23
-    - Sub-18, Sub-20 etc.
-    - Under 20 etc.
-    - Youth / Academy / Reserves
-    - Time B no final
-    - Time II / III no final
-    """
     n = normalizar(nome)
 
     if re.search(r"\bu(15|16|17|18|19|20|21|22|23)\b", n):
@@ -191,22 +179,16 @@ def eh_sub_ou_reserva(nome):
         return True
 
     termos_reserva = [
-        "youth",
-        "academy",
-        "reserve",
-        "reserves",
-        "jong "
+        "youth", "academy", "reserve", "reserves", "jong "
     ]
 
     for termo in termos_reserva:
         if termo in n:
             return True
 
-    # Exemplo: Porto B, Sporting CP B
     if re.search(r"\bb\b$", n):
         return True
 
-    # Exemplo: Real Madrid II, Winterthur II
     if re.search(r"\bii\b$", n):
         return True
 
@@ -217,32 +199,11 @@ def eh_sub_ou_reserva(nome):
 
 
 def jogo_bloqueado(casa, visitante, liga):
-    if eh_sub_ou_reserva(casa):
-        return True
-
-    if eh_sub_ou_reserva(visitante):
-        return True
-
-    if eh_sub_ou_reserva(liga):
-        return True
-
-    return False
-
-
-def eh_time_exato(nome_time, referencia):
-    return normalizar(nome_time) == normalizar(referencia)
-
-
-def eh_favorito(nome_time):
-    for favorito in FAVORITOS_CANTOS:
-        if eh_time_exato(nome_time, favorito):
-            return True
-    return False
-
-
-def adicionar_sem_duplicar(lista, item):
-    if item not in lista:
-        lista.append(item)
+    return (
+        eh_sub_ou_reserva(casa)
+        or eh_sub_ou_reserva(visitante)
+        or eh_sub_ou_reserva(liga)
+    )
 
 
 # ============================================================
@@ -253,17 +214,10 @@ def eh_liga_cartoes(liga, pais):
     liga_n = normalizar(liga)
     pais_n = normalizar(pais)
 
-    # Bloqueia feminino para cartões
     termos_feminino = [
-        "women",
-        "woman",
-        "feminina",
-        "femenina",
-        "feminino",
-        "femenino",
-        "liga f",
-        "primera division femenina",
-        "serie a women",
+        "women", "woman", "feminina", "femenina",
+        "feminino", "femenino", "liga f",
+        "primera division femenina", "serie a women",
         "super league women"
     ]
 
@@ -271,131 +225,143 @@ def eh_liga_cartoes(liga, pais):
         if termo in liga_n:
             return False
 
-    # Bloqueia divisões muito baixas / regionais para cartões
     termos_baixos = [
-        "tercera",
-        "quarta",
-        "regional",
-        "state",
-        "district",
-        "county",
-        "amateur",
-        "rfef",
-        "provincial",
-        "tasmania",
-        "victoria premier league",
-        "queensland premier league",
-        "npl",
-        "northern championship",
-        "southern championship"
+        "tercera", "quarta", "regional", "state", "district",
+        "county", "amateur", "rfef", "provincial",
+        "tasmania", "victoria premier league",
+        "queensland premier league", "npl"
     ]
 
     for termo in termos_baixos:
         if termo in liga_n:
             return False
 
-    # Competições continentais boas para cartões
     ligas_especiais = [
-        "libertadores",
-        "sudamericana",
-        "copa do brasil",
-        "champions league",
-        "europa league",
-        "conference league"
+        "libertadores", "sudamericana", "copa do brasil",
+        "champions league", "europa league", "conference league"
     ]
 
     for termo in ligas_especiais:
         if termo in liga_n:
             return True
 
-    # Ligas permitidas por país
     ligas_por_pais = {
         "brazil": [
-            "serie a",
-            "serie b",
-            "copa do brasil"
+            "serie a", "serie b", "copa do brasil"
         ],
         "spain": [
-            "la liga",
-            "segunda división",
-            "segunda division"
+            "la liga", "segunda división", "segunda division"
         ],
         "italy": [
-            "serie a",
-            "serie b",
-            "coppa italia"
+            "serie a", "serie b", "coppa italia"
         ],
         "england": [
-            "premier league",
-            "championship",
-            "fa cup",
-            "league cup"
+            "premier league", "championship", "fa cup", "league cup"
         ],
         "germany": [
-            "bundesliga",
-            "2. bundesliga",
-            "dfb pokal"
+            "bundesliga", "2. bundesliga", "dfb pokal"
         ],
         "france": [
-            "ligue 1",
-            "ligue 2",
-            "coupe de france"
+            "ligue 1", "ligue 2", "coupe de france"
         ],
         "portugal": [
-            "primeira liga",
-            "segunda liga",
-            "taça de portugal",
-            "taca de portugal"
+            "primeira liga", "segunda liga", "taça de portugal", "taca de portugal"
         ],
         "turkey": [
-            "süper lig",
-            "super lig",
-            "1. lig",
-            "cup"
+            "süper lig", "super lig", "1. lig", "cup"
         ],
         "argentina": [
-            "liga profesional",
-            "primera división",
-            "primera division",
-            "copa argentina",
-            "primera nacional"
+            "liga profesional", "primera división", "primera division",
+            "copa argentina", "primera nacional"
         ],
         "uruguay": [
-            "primera división",
-            "primera division"
+            "primera división", "primera division"
         ],
         "chile": [
-            "primera división",
-            "primera division"
+            "primera división", "primera division"
         ],
         "colombia": [
-            "primera a",
-            "copa colombia"
+            "primera a", "copa colombia"
+        ],
+        "paraguay": [
+            "division profesional", "división profesional",
+            "primera división", "primera division",
+            "division intermedia", "división intermedia",
+            "copa paraguay"
         ],
         "mexico": [
-            "liga mx",
-            "liga de expansión",
-            "liga de expansion"
+            "liga mx", "liga de expansión", "liga de expansion"
         ],
         "scotland": [
-            "premiership",
-            "championship"
+            "premiership", "championship"
         ],
         "netherlands": [
-            "eredivisie",
-            "eerste divisie"
+            "eredivisie", "eerste divisie"
         ],
         "belgium": [
-            "jupiler pro league",
-            "challenger pro league"
+            "jupiler pro league", "challenger pro league"
         ]
     }
 
-    ligas_permitidas = ligas_por_pais.get(pais_n, [])
-
-    for liga_ok in ligas_permitidas:
+    for liga_ok in ligas_por_pais.get(pais_n, []):
         if normalizar(liga_ok) in liga_n:
             return True
+
+    return False
+
+
+# ============================================================
+# JOGOS QUENTES / EMPATE / CLÁSSICOS
+# ============================================================
+
+CLASSICOS = [
+    ("Barcelona", "Real Madrid"),
+    ("Real Madrid", "Barcelona"),
+
+    ("Corinthians", "São Paulo"),
+    ("São Paulo", "Corinthians"),
+    ("Corinthians", "Sao Paulo"),
+    ("Sao Paulo", "Corinthians"),
+
+    ("Celtic", "Rangers"),
+    ("Rangers", "Celtic"),
+
+    ("AC Milan", "Inter"),
+    ("Inter", "AC Milan"),
+    ("Inter Milan", "AC Milan"),
+    ("AC Milan", "Inter Milan"),
+
+    ("Monaco", "Lille"),
+    ("Lille", "Monaco"),
+
+    ("Santos", "Bragantino"),
+    ("Bragantino", "Santos"),
+
+    ("Mirandes", "Eibar"),
+    ("Mirandés", "Eibar"),
+    ("Eibar", "Mirandes"),
+    ("Eibar", "Mirandés"),
+
+    ("Grêmio", "Flamengo"),
+    ("Gremio", "Flamengo"),
+    ("Flamengo", "Grêmio"),
+    ("Flamengo", "Gremio")
+]
+
+
+def eh_classico_ou_quente(casa, visitante):
+    for a, b in CLASSICOS:
+        if eh_time_exato(casa, a) and eh_time_exato(visitante, b):
+            return True
+    return False
+
+
+def eh_jogo_equilibrado(casa, visitante):
+    if eh_classico_ou_quente(casa, visitante):
+        return True
+
+    if eh_favorito(casa) and eh_favorito(visitante):
+        return True
 
     return False
 
@@ -406,29 +372,15 @@ def eh_liga_cartoes(liga, pais):
 
 def prioridade_canto(time_nome):
     favoritos_altos = [
-        "Manchester City",
-        "Liverpool",
-        "Arsenal",
-        "Bayern Munich",
-        "Bayern München",
-        "Real Madrid",
-        "Barcelona",
-        "PSG",
-        "Paris Saint Germain",
-        "Flamengo",
-        "Palmeiras",
-        "Galatasaray",
-        "Fenerbahce",
-        "Fenerbahçe",
-        "Benfica",
-        "Sporting CP",
-        "FC Porto",
-        "Inter Miami"
+        "Manchester City", "Liverpool", "Arsenal", "Bayern Munich",
+        "Bayern München", "Real Madrid", "Barcelona", "PSG",
+        "Paris Saint Germain", "Flamengo", "Palmeiras",
+        "Galatasaray", "Fenerbahce", "Fenerbahçe",
+        "Benfica", "Sporting CP", "FC Porto", "Inter Miami"
     ]
 
-    for favorito in favoritos_altos:
-        if eh_time_exato(time_nome, favorito):
-            return "🔥"
+    if contem_time(time_nome, favoritos_altos):
+        return "🔥"
 
     if eh_favorito(time_nome):
         return "⚠️"
@@ -438,60 +390,52 @@ def prioridade_canto(time_nome):
 
 def prioridade_cartao(liga, pais):
     pais_forte = [
-        "Brazil",
-        "Spain",
-        "Italy",
-        "Argentina",
-        "Turkey",
-        "Uruguay",
-        "Chile",
-        "Colombia"
+        "Brazil", "Spain", "Italy", "Argentina",
+        "Turkey", "Uruguay", "Chile", "Colombia",
+        "Paraguay"
     ]
 
-    liga_n = normalizar(liga)
     pais_n = normalizar(pais)
+    liga_n = normalizar(liga)
 
-    for pais_ok in pais_forte:
-        if normalizar(pais_ok) == pais_n:
+    for p in pais_forte:
+        if normalizar(p) == pais_n:
             return "🔥"
 
     if "libertadores" in liga_n or "sudamericana" in liga_n:
         return "🔥"
 
-    pais_medio = [
-        "England",
-        "Germany",
-        "France",
-        "Portugal",
-        "Scotland",
-        "Netherlands",
-        "Belgium",
-        "Mexico"
-    ]
-
-    for pais_ok in pais_medio:
-        if normalizar(pais_ok) == pais_n:
-            return "⚠️"
-
-    return "🧪"
+    return "⚠️"
 
 
 def prioridade_jogador(time_ref):
     times_top = [
-        "Manchester City",
-        "Bayern Munich",
-        "Bayern München",
-        "Inter Miami",
-        "Liverpool",
-        "Manchester United",
-        "Flamengo"
+        "Manchester City", "Bayern Munich", "Bayern München",
+        "Inter Miami", "Liverpool", "Manchester United",
+        "Flamengo", "Arsenal", "Barcelona", "Real Madrid",
+        "Paris Saint Germain", "PSG", "FC Porto", "Palmeiras"
     ]
 
-    for time_top in times_top:
-        if eh_time_exato(time_ref, time_top):
-            return "🔥"
+    if contem_time(time_ref, times_top):
+        return "🔥"
 
     return "⚠️"
+
+
+def prioridade_resultado(time_nome):
+    times_top = [
+        "Arsenal", "Barcelona", "Real Madrid", "Paris Saint Germain",
+        "PSG", "FC Porto", "Palmeiras", "Flamengo", "Bayern Munich",
+        "Bayern München", "Manchester City", "Liverpool"
+    ]
+
+    if contem_time(time_nome, times_top):
+        return "🔥"
+
+    if eh_favorito_resultado(time_nome):
+        return "⚠️"
+
+    return "🧪"
 
 
 # ============================================================
@@ -548,11 +492,19 @@ def gerar_candidatos(jogos):
     resultado = {
         "A1 — Cantos 10 min | Mandante forte": [],
         "A2 — Cantos 10 min | Visitante favorito": [],
+
         "B1 — Cartões 1T | Ambos +0 cartão": [],
+        "B4 — Cartões FT por time | +2/+3 cartões": [],
+        "B5 — Cartões individuais | Clássico/jogo quente": [],
+
         "C1 — Criador + Finalizador": [],
-        "C2 — Gol de Cabeça": [],
-        "C3 — Gol de Fora da Área": [],
-        "D — Builder Favorito": []
+        "C2 — Gol de Cabeça | Jogos para procurar": [],
+        "C3 — Gol de Fora da Área | Jogos para procurar": [],
+
+        "D — Builder Favorito": [],
+
+        "E1 — Resultado Final | Favoritos para vencer": [],
+        "E2 — Resultado Final | Empate candidato": []
     }
 
     for jogo in jogos:
@@ -562,31 +514,33 @@ def gerar_candidatos(jogos):
         pais = pais_liga(jogo)
         hora = horario_jogo(jogo)
 
-        # Corta sub, base, reservas e times B/II
         if jogo_bloqueado(casa, visitante, liga):
             continue
 
         jogo_txt = f"{hora} — {casa} x {visitante}"
 
-        # A1 — Cantos mandante forte
+        # ====================================================
+        # A — CANTOS 10 MIN
+        # ====================================================
+
         if eh_favorito(casa):
             emoji = prioridade_canto(casa)
-
             adicionar_sem_duplicar(
                 resultado["A1 — Cantos 10 min | Mandante forte"],
                 f"{emoji} {jogo_txt} — olhar {casa} +1 canto em 10 min"
             )
 
-        # A2 — Cantos visitante favorito
         if eh_favorito(visitante):
             emoji = prioridade_canto(visitante)
-
             adicionar_sem_duplicar(
                 resultado["A2 — Cantos 10 min | Visitante favorito"],
                 f"{emoji} {jogo_txt} — olhar {visitante} +1 canto em 10 min"
             )
 
-        # B1 — Cartões 1º tempo
+        # ====================================================
+        # B — CARTÕES
+        # ====================================================
+
         if eh_liga_cartoes(liga, pais):
             emoji = prioridade_cartao(liga, pais)
 
@@ -595,7 +549,31 @@ def gerar_candidatos(jogos):
                 f"{emoji} {jogo_txt} — {liga} / {pais} — olhar ambos +0 cartão no 1T"
             )
 
-        # C e D — Jogadores especiais
+            # B4 — Cartões FT por time
+            if eh_classico_ou_quente(casa, visitante) or normalizar(pais) in [
+                "brazil", "spain", "italy", "argentina", "uruguay",
+                "paraguay", "turkey", "scotland", "france"
+            ]:
+                linha = "+2 cartões FT"
+                if eh_classico_ou_quente(casa, visitante):
+                    linha = "+2 ou +3 cartões FT"
+
+                adicionar_sem_duplicar(
+                    resultado["B4 — Cartões FT por time | +2/+3 cartões"],
+                    f"{emoji} {jogo_txt} — olhar {casa} {linha} + {visitante} {linha}"
+                )
+
+            # B5 — Cartões individuais
+            if eh_classico_ou_quente(casa, visitante):
+                adicionar_sem_duplicar(
+                    resultado["B5 — Cartões individuais | Clássico/jogo quente"],
+                    f"🔥 {jogo_txt} — olhar 3-4 jogadores para cartão individual"
+                )
+
+        # ====================================================
+        # C1 — JOGADORES ESPECIAIS CADASTRADOS
+        # ====================================================
+
         for time_ref, sugestoes in TIMES_JOGADORES_ESPECIAIS.items():
             time_no_jogo = (
                 eh_time_exato(casa, time_ref)
@@ -612,13 +590,13 @@ def gerar_candidatos(jogos):
 
                 if "cabeca" in s:
                     adicionar_sem_duplicar(
-                        resultado["C2 — Gol de Cabeça"],
+                        resultado["C2 — Gol de Cabeça | Jogos para procurar"],
                         f"{emoji_jogador} {jogo_txt} — olhar {sugestao}"
                     )
 
                 elif "fora da area" in s:
                     adicionar_sem_duplicar(
-                        resultado["C3 — Gol de Fora da Área"],
+                        resultado["C3 — Gol de Fora da Área | Jogos para procurar"],
                         f"{emoji_jogador} {jogo_txt} — olhar {sugestao}"
                     )
 
@@ -628,9 +606,73 @@ def gerar_candidatos(jogos):
                         f"{emoji_jogador} {jogo_txt} — olhar {sugestao}"
                     )
 
+        # ====================================================
+        # C2 / C3 — JOGOS PARA PROCURAR CABEÇA E FORA DA ÁREA
+        # ====================================================
+
+        times_no_jogo = []
+
+        if eh_favorito(casa):
+            times_no_jogo.append(casa)
+
+        if eh_favorito(visitante):
+            times_no_jogo.append(visitante)
+
+        for time_forte in times_no_jogo:
+            emoji = prioridade_jogador(time_forte)
+
+            adicionar_sem_duplicar(
+                resultado["C2 — Gol de Cabeça | Jogos para procurar"],
+                f"{emoji} {jogo_txt} — procurar cabeceio: centroavante/zagueiro do {time_forte}"
+            )
+
+            adicionar_sem_duplicar(
+                resultado["C3 — Gol de Fora da Área | Jogos para procurar"],
+                f"{emoji} {jogo_txt} — procurar fora da área: meia/chutador do {time_forte}"
+            )
+
+        # ====================================================
+        # D — BUILDER FAVORITO
+        # ====================================================
+
+        for time_forte in times_no_jogo:
+            emoji = prioridade_jogador(time_forte)
+
+            detalhe = "montar builder: jogador 1+ chute no alvo + time mais chutes/escanteios"
+            if eh_jogo_equilibrado(casa, visitante):
+                detalhe = "builder leve: evitar exagerar porque é clássico/equilibrado"
+
             adicionar_sem_duplicar(
                 resultado["D — Builder Favorito"],
-                f"{emoji_jogador} {jogo_txt} — montar builder: jogador chute/gol + time domínio"
+                f"{emoji} {jogo_txt} — {time_forte}: {detalhe}"
+            )
+
+        # ====================================================
+        # E1 — RESULTADO FINAL FAVORITO
+        # ====================================================
+
+        if eh_favorito_resultado(casa):
+            emoji = prioridade_resultado(casa)
+            adicionar_sem_duplicar(
+                resultado["E1 — Resultado Final | Favoritos para vencer"],
+                f"{emoji} {jogo_txt} — olhar {casa} vencer / pagamento antecipado"
+            )
+
+        if eh_favorito_resultado(visitante):
+            emoji = prioridade_resultado(visitante)
+            adicionar_sem_duplicar(
+                resultado["E1 — Resultado Final | Favoritos para vencer"],
+                f"{emoji} {jogo_txt} — olhar {visitante} vencer / pagamento antecipado"
+            )
+
+        # ====================================================
+        # E2 — EMPATE CANDIDATO
+        # ====================================================
+
+        if eh_jogo_equilibrado(casa, visitante):
+            adicionar_sem_duplicar(
+                resultado["E2 — Resultado Final | Empate candidato"],
+                f"⚠️ {jogo_txt} — olhar empate seco se odd 3.00+"
             )
 
     return resultado
@@ -657,11 +699,19 @@ def limitar_lista(dados):
     limites = {
         "A1 — Cantos 10 min | Mandante forte": 6,
         "A2 — Cantos 10 min | Visitante favorito": 6,
-        "B1 — Cartões 1T | Ambos +0 cartão": 8,
+
+        "B1 — Cartões 1T | Ambos +0 cartão": 20,
+        "B4 — Cartões FT por time | +2/+3 cartões": 15,
+        "B5 — Cartões individuais | Clássico/jogo quente": 10,
+
         "C1 — Criador + Finalizador": 6,
-        "C2 — Gol de Cabeça": 6,
-        "C3 — Gol de Fora da Área": 6,
-        "D — Builder Favorito": 8
+        "C2 — Gol de Cabeça | Jogos para procurar": 8,
+        "C3 — Gol de Fora da Área | Jogos para procurar": 8,
+
+        "D — Builder Favorito": 10,
+
+        "E1 — Resultado Final | Favoritos para vencer": 10,
+        "E2 — Resultado Final | Empate candidato": 8
     }
 
     limitado = {}
