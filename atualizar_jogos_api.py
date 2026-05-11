@@ -92,6 +92,16 @@ TIMES_DOMINIO_1T = [
 ]
 
 
+
+
+TIMES_DOMINIO_1T_AGRESSIVO = [
+    "Manchester City", "Arsenal", "Liverpool", "Tottenham",
+    "Real Madrid", "Barcelona", "PSG", "Paris Saint Germain",
+    "Bayern Munich", "Bayern München", "Benfica", "Sporting CP",
+    "FC Porto", "Porto", "TSG Hoffenheim", "Hoffenheim",
+    "River Plate", "Flamengo", "CRB"
+]
+
 TIMES_BTTS_VENCER = [
     "Manchester City", "Arsenal", "Liverpool", "Tottenham",
     "Real Madrid", "Barcelona", "PSG", "Paris Saint Germain",
@@ -225,11 +235,35 @@ def adicionar_sem_duplicar(lista, item):
 
 
 # ============================================================
-# BLOQUEIO DE BASE / RESERVAS
+# BLOQUEIO DE BASE / RESERVAS / FEMININO
 # ============================================================
+
+def eh_feminino(nome):
+    n = normalizar(nome)
+
+    termos = [
+        " women", "woman", "feminina", "femenina", "feminino", "femenino",
+        "frauen", "liga f", "serie a women", "super league women"
+    ]
+
+    if any(t in f" {n}" for t in termos):
+        return True
+
+    # Muitos jogos femininos aparecem como "Team W" ou "Team (F)".
+    if re.search(r"(\s|^)(w|f)$", n):
+        return True
+
+    if re.search(r"\((w|f)\)$", n):
+        return True
+
+    return False
+
 
 def eh_sub_ou_reserva(nome):
     n = normalizar(nome)
+
+    if eh_feminino(nome):
+        return True
 
     if re.search(r"\bu(15|16|17|18|19|20|21|22|23)\b", n):
         return True
@@ -343,7 +377,7 @@ def eh_liga_aberta_gols(liga, pais):
     liga_n = normalizar(liga)
     pais_n = normalizar(pais)
 
-    if any(t in liga_n for t in ["women", "feminina", "femenina", "u19", "u20", "u21", "reserves"]):
+    if eh_feminino(liga) or any(t in liga_n for t in ["u19", "u20", "u21", "reserves"]):
         return False
 
     paises_abertos = [
@@ -373,7 +407,7 @@ def eh_liga_para_dominio_1t(liga, pais):
     liga_n = normalizar(liga)
     pais_n = normalizar(pais)
 
-    if any(t in liga_n for t in ["women", "feminina", "femenina", "u19", "u20", "u21", "reserves"]):
+    if eh_feminino(liga) or any(t in liga_n for t in ["u19", "u20", "u21", "reserves"]):
         return False
 
     paises_ok = [
@@ -586,15 +620,20 @@ def horario_jogo(jogo):
 # LINHAS SUGERIDAS FAIXA VIP
 # ============================================================
 
+def eh_time_dominio_1t_agressivo(time_nome):
+    return contem_time(time_nome, TIMES_DOMINIO_1T_AGRESSIVO)
+
+
 def linhas_dominio_1t(time_forte, adversario):
-    if contem_time(time_forte, [
-        "Manchester City", "PSG", "Paris Saint Germain", "Arsenal",
-        "Liverpool", "Real Madrid", "Barcelona", "Bayern Munich",
-        "Bayern München", "Benfica", "Sporting CP", "FC Porto"
-    ]):
+    """
+    H1 base — 4 pernas:
+    over chutes 1T do dominante + under chutes 1T do rival
+    over escanteios 1T do dominante + under escanteios 1T do rival
+    """
+    if eh_time_dominio_1t_agressivo(time_forte):
         return (
             f"{time_forte} +7.5/+8.5 chutes 1T; "
-            f"{adversario} -5.5/-6.5 chutes 1T; "
+            f"{adversario} -5.5/-7.5 chutes 1T; "
             f"{time_forte} +3/+4 escanteios 1T; "
             f"{adversario} -2/-3 escanteios 1T"
         )
@@ -608,10 +647,60 @@ def linhas_dominio_1t(time_forte, adversario):
 
 
 def linha_chutes_gol_1t(time_forte, adversario):
+    """
+    H2 agressivo — acrescenta chutes ao gol 1T.
+    """
+    if eh_time_dominio_1t_agressivo(time_forte):
+        return (
+            f"{time_forte} +2.5 chutes ao gol 1T "
+            f"ou {adversario} -1.5 chutes ao gol 1T"
+        )
+
     return (
-        f"{time_forte} +2.5 chutes ao gol 1T "
+        f"{time_forte} +1.5/+2.5 chutes ao gol 1T "
         f"ou {adversario} -1.5 chutes ao gol 1T"
     )
+
+
+def linhas_modelo_print_h2(time_forte, adversario):
+    """
+    H2.1 — Modelo print Faixa VIP:
+    5 pernas no mesmo jogo, como Hoffenheim/City/CRB:
+    over chutes 1T + under rival + over escanteios 1T + under rival + over SOT 1T.
+    """
+    if eh_time_dominio_1t_agressivo(time_forte):
+        return (
+            f"{time_forte} +8.5 chutes 1T; "
+            f"{adversario} -7.5 chutes 1T; "
+            f"{time_forte} +3 escanteios 1T; "
+            f"{adversario} -2 escanteios 1T; "
+            f"{time_forte} +2.5 chutes ao gol 1T"
+        )
+
+    return (
+        f"{time_forte} +6.5 chutes 1T; "
+        f"{adversario} -7.5 chutes 1T; "
+        f"{time_forte} +2 escanteios 1T; "
+        f"{adversario} -2 escanteios 1T; "
+        f"{time_forte} +1.5/+2.5 chutes ao gol 1T"
+    )
+
+
+def deve_sugerir_modelo_print_h2(time_forte, adversario):
+    """
+    Não manda H2.1 em qualquer jogo.
+    Preferência: time agressivo/dominante contra rival que não é outro gigante.
+    """
+    if not eh_time_dominio_1t(time_forte):
+        return False
+
+    if eh_time_dominio_1t_agressivo(time_forte) and not eh_time_dominio_1t_agressivo(adversario):
+        return True
+
+    if eh_time_dominio_1t_agressivo(time_forte) and not eh_favorito_resultado(adversario):
+        return True
+
+    return False
 
 
 # ============================================================
@@ -641,6 +730,7 @@ def gerar_candidatos(jogos):
         # FAIXA VIP
         "[FAIXA VIP] H1 — Domínio estatístico 1T | Chutes + escanteios": [],
         "[FAIXA VIP] H2 — Domínio 1T agressivo | Inclui chutes ao gol": [],
+        "[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T": [],
         "[FAIXA VIP] H3 — Domínio 1T invertido | Visitante/zebra pressionando": [],
         "[FAIXA VIP] G7 — Resultado final + ambos marcam": [],
         "[FAIXA VIP] C7 — Chutes de jogadores | Procurar linhas": []
@@ -846,6 +936,12 @@ def gerar_candidatos(jogos):
                     f"{emoji} {jogo_txt} — H1 + olhar {linha_chutes_gol_1t(casa, visitante)}"
                 )
 
+                if deve_sugerir_modelo_print_h2(casa, visitante):
+                    adicionar_sem_duplicar(
+                        resultado["[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T"],
+                        f"{emoji} {jogo_txt} — replicar modelo print: {linhas_modelo_print_h2(casa, visitante)}"
+                    )
+
             # Visitante dominante
             if eh_time_dominio_1t(visitante):
                 emoji = prioridade_dominio_1t(visitante, liga, pais)
@@ -860,6 +956,12 @@ def gerar_candidatos(jogos):
                     resultado["[FAIXA VIP] H2 — Domínio 1T agressivo | Inclui chutes ao gol"],
                     f"{emoji} {jogo_txt} — H1 + olhar {linha_chutes_gol_1t(visitante, casa)}"
                 )
+
+                if deve_sugerir_modelo_print_h2(visitante, casa):
+                    adicionar_sem_duplicar(
+                        resultado["[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T"],
+                        f"{emoji} {jogo_txt} — replicar modelo print: {linhas_modelo_print_h2(visitante, casa)}"
+                    )
 
                 if not eh_favorito_resultado(visitante) or eh_jogo_equilibrado(casa, visitante):
                     adicionar_sem_duplicar(
@@ -954,6 +1056,7 @@ def limitar_lista(dados):
         # FAIXA VIP
         "[FAIXA VIP] H1 — Domínio estatístico 1T | Chutes + escanteios": 10,
         "[FAIXA VIP] H2 — Domínio 1T agressivo | Inclui chutes ao gol": 8,
+        "[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T": 6,
         "[FAIXA VIP] H3 — Domínio 1T invertido | Visitante/zebra pressionando": 6,
         "[FAIXA VIP] G7 — Resultado final + ambos marcam": 10,
         "[FAIXA VIP] C7 — Chutes de jogadores | Procurar linhas": 8
