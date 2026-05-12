@@ -694,7 +694,7 @@ def buscar_odds_hoje():
     pagina = 1
     total_paginas = 1
 
-    while pagina <= total_paginas and pagina <= 5:
+    while pagina <= total_paginas and pagina <= 3:
         params = {
             "date": hoje,
             "timezone": "America/Sao_Paulo",
@@ -729,7 +729,7 @@ def buscar_odds_hoje():
             return odds_por_fixture
 
         paging = dados.get("paging", {})
-        total_paginas = int(paging.get("total", 1) or 1)
+        total_paginas = min(int(paging.get("total", 1) or 1), 3)
 
         for item in dados.get("response", []):
             fixture = item.get("fixture", {})
@@ -1572,6 +1572,7 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None):
 
         jogo_txt = f"{hora} — {casa} x {visitante}"
         favorito_odd = obter_favorito_por_odd(jogo, odds_por_fixture)
+        medias_home, medias_away = obter_medias_jogo(jogo, medias_por_time)
 
         # ====================================================
         # LUKA A — CANTOS 10 MIN
