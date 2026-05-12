@@ -16,6 +16,7 @@ ARQUIVO_JOGOS = "jogos.json"
 URL_FIXTURES = "https://v3.football.api-sports.io/fixtures"
 URL_ODDS = "https://v3.football.api-sports.io/odds"
 URL_FIXTURE_STATS = "https://v3.football.api-sports.io/fixtures/statistics"
+URL_FIXTURE_PLAYERS = "https://v3.football.api-sports.io/fixtures/players"
 
 HEADERS = {
     "x-apisports-key": API_FOOTBALL_KEY
@@ -1198,6 +1199,350 @@ def montar_linha_cartoes_stats(casa, visitante, stats_casa, stats_visitante):
 
     return texto_base
 
+
+# ============================================================
+# RANKING REAL DE JOGADORES — CHUTES / SOT / GOLS / ASSISTÊNCIAS
+# ============================================================
+# Usa últimos jogos do time + endpoint /fixtures/players.
+# Nem todas as ligas têm cobertura completa. Se não vier dado, o robô
+# continua usando a lista manual/perfil.
+
+PLAYER_CACHE_FIXTURE = {}
+PLAYER_CACHE_TEAM = {}
+
+
+def buscar_jogadores_fixture(fixture_id):
+    if fixture_id in PLAYER_CACHE_FIXTURE:
+        return PLAYER_CACHE_FIXTURE[fixture_id]
+
+    try:
+        resposta = requests.get(
+            URL_FIXTURE_PLAYERS,
+            headers=HEADERS,
+            params={"fixture": fixture_id},
+            timeout=30
+        )
+
+        if resposta.status_code != 200:
+            PLAYER_CACHE_FIXTURE[fixture_id] = []
+            return []
+
+        dados = resposta.json().get("response", [])
+        PLAYER_CACHE_FIXTURE[fixture_id] = dados
+        return dados
+
+    except Exception as erro:
+        print(f"Aviso: erro ao buscar jogadores do fixture {fixture_id}: {erro}")
+        PLAYER_CACHE_FIXTURE[fixture_id] = []
+        return []
+
+
+def jogador_em_lista_assistencia(time_nome, jogador_nome):
+    """
+    Dá um pequeno boost para jogadores conhecidos por escanteio/falta/lateral.
+    A lista manual não substitui os dados reais; só ajuda a ordenar.
+    """
+    try:
+        lista = None
+
+        for time_ref, jogadores in JOGADORES_ASSISTENCIA.items():
+            if eh_time_exato(time_nome, time_ref):
+                lista = jogadores
+                break
+
+        if not lista:
+            return False
+
+        jn = normalizar(jogador_nome)
+
+        for nome_manual in lista:
+            partes = re.split(r"[/,]", nome_manual)
+
+            for parte in partes:
+                parte_n = normalizar(parte).strip()
+
+                if parte_n and (parte_n in jn or jn in parte_n):
+                    return True
+
+        return False
+
+    except Exception:
+        return False
+
+
+def calcular_rank_jogadores_time(team_id, team_name="", limite=5):
+    """
+    Rank dos jogadores pelos últimos jogos:
+    - média de chutes
+    - média de chutes no alvo
+    - gols recentes
+    - assistências
+    - passes-chave
+
+    Média é por aparição com minutos > 0.
+    """
+    chave = (team_id, "player_rank", limite)
+
+    if chave in PLAYER_CACHE_TEAM:
+        return PLAYER_CACHE_TEAM[chave]
+
+    jogos = buscar_ultimos_jogos_time(team_id, limite)
+
+    jogadores = {}
+
+    for jogo in jogos:
+        fixture_id = jogo.get("fixture", {}).get("id")
+
+        if not fixture_id:
+            continue
+
+        blocos = buscar_jogadores_fixture(fixture_id)
+
+        if not blocos:
+            continue
+
+        for bloco_time in blocos:
+            if bloco_time.get("team", {}).get("id") != team_id:
+                continue
+
+            for item in bloco_time.get("players", []):
+                player = item.get("player", {})
+                nome = player.get("name", "Jogador")
+                player_id = player.get("id") or nome
+
+                for stats in item.get("statistics", []):
+                    games = stats.get("games", {}) or {}
+                    shots = stats.get("shots", {}) or {}
+                    goals = stats.get("goals", {}) or {}
+                    passes = stats.get("passes", {}) or {}
+
+                    minutos = games.get("minutes") or 0
+
+                    # Ignorar quem quase não jogou no jogo.
+                    if minutos <= 0:
+                        continue
+
+                    if player_id not in jogadores:
+                        jogadores[player_id] = {
+                            "jogador": nome,
+                            "posicao": games.get("position") or "",
+                            "aparicoes": 0,
+                            "minutos": 0,
+                            "chutes": 0,
+                            "chutes_no_alvo": 0,
+                            "gols": 0,
+                            "assistencias": 0,
+                            "passes_chave": 0,
+                        }
+
+                    d = jogadores[player_id]
+
+                    d["aparicoes"] += 1
+                    d["minutos"] += minutos
+                    d["chutes"] += shots.get("total") or 0
+                    d["chutes_no_alvo"] += shots.get("on") or 0
+                    d["gols"] += goals.get("total") or 0
+                    d["assistencias"] += goals.get("assists") or 0
+                    d["passes_chave"] += passes.get("key") or 0
+
+    ranking = []
+
+    for _, d in jogadores.items():
+        apps = max(d["aparicoes"], 1)
+        avg_min = d["minutos"] / apps
+
+        # Evitar atletas que entram pouco.
+        if avg_min < 25:
+            continue
+
+        media_chutes = d["chutes"] / apps
+        media_sot = d["chutes_no_alvo"] / apps
+        media_gols = d["gols"] / apps
+        media_assist = d["assistencias"] / apps
+        media_key = d["passes_chave"] / apps
+
+        bola_parada = jogador_em_lista_assistencia(team_name, d["jogador"])
+
+        score_chute = (
+            media_chutes * 1.20
+            + media_sot * 1.80
+            + media_gols * 1.20
+            + min(avg_min, 90) / 90
+        )
+
+        score_sot = (
+            media_sot * 2.50
+            + media_chutes * 0.70
+            + media_gols * 1.30
+            + min(avg_min, 90) / 120
+        )
+
+        score_assist = (
+            media_key * 1.40
+            + media_assist * 3.00
+            + (0.80 if bola_parada else 0)
+            + min(avg_min, 90) / 180
+        )
+
+        ranking.append({
+            "jogador": d["jogador"],
+            "posicao": d["posicao"],
+            "aparicoes": d["aparicoes"],
+            "media_minutos": round(avg_min, 1),
+            "media_chutes": round(media_chutes, 2),
+            "media_sot": round(media_sot, 2),
+            "gols": d["gols"],
+            "assistencias": d["assistencias"],
+            "passes_chave": d["passes_chave"],
+            "media_passes_chave": round(media_key, 2),
+            "bola_parada": bola_parada,
+            "score_chute": round(score_chute, 2),
+            "score_sot": round(score_sot, 2),
+            "score_assist": round(score_assist, 2),
+        })
+
+    PLAYER_CACHE_TEAM[chave] = ranking
+    return ranking
+
+
+def buscar_rank_jogadores_times_do_dia(jogos, odds_por_fixture):
+    """
+    Calcula ranking de jogadores só para times mais relevantes do dia
+    para não gastar chamadas demais na API.
+    """
+    rankings = {}
+
+    times = selecionar_times_para_medias(jogos, odds_por_fixture, max_times=10)
+
+    print(f"Calculando ranking de jogadores para {len(times)} times...")
+
+    nomes_por_id = {}
+
+    for jogo in jogos:
+        for lado in ["home", "away"]:
+            nomes_por_id[id_time(jogo, lado)] = nome_time(jogo, lado)
+
+    for team_id in times:
+        team_name = nomes_por_id.get(team_id, "")
+        rankings[team_id] = calcular_rank_jogadores_time(team_id, team_name, limite=5)
+
+    return rankings
+
+
+def obter_rank_jogadores_jogo(jogo, rankings_por_time):
+    home_id = id_time(jogo, "home")
+    away_id = id_time(jogo, "away")
+
+    return rankings_por_time.get(home_id, []), rankings_por_time.get(away_id, [])
+
+
+def escolher_rank_do_time(time_nome, casa, visitante, rank_home, rank_away):
+    if eh_time_exato(time_nome, casa):
+        return rank_home
+
+    if eh_time_exato(time_nome, visitante):
+        return rank_away
+
+    return []
+
+
+def linha_jogador_sot(j):
+    if j["media_sot"] >= 1.00:
+        return "1+ chute no alvo forte"
+    if j["media_sot"] >= 0.60:
+        return "1+ chute no alvo aceitável"
+    if j["media_chutes"] >= 2.20:
+        return "1+ chute no alvo possível / melhor +1.5 chutes"
+    return "mais indicado para +1.5 chutes"
+
+
+def formatar_top_sot(ranking, limite=3):
+    if not ranking:
+        return ""
+
+    candidatos = sorted(
+        ranking,
+        key=lambda x: x["score_sot"],
+        reverse=True
+    )[:limite]
+
+    partes = []
+
+    for j in candidatos:
+        partes.append(
+            f"{j['jogador']} ({j['media_chutes']} ch/j, {j['media_sot']} SOT/j, "
+            f"{j['gols']} gols, {linha_jogador_sot(j)})"
+        )
+
+    return "; ".join(partes)
+
+
+def formatar_top_chutes(ranking, limite=3):
+    if not ranking:
+        return ""
+
+    candidatos = sorted(
+        ranking,
+        key=lambda x: x["score_chute"],
+        reverse=True
+    )[:limite]
+
+    partes = []
+
+    for j in candidatos:
+        linha = "+2.5 chutes" if j["media_chutes"] >= 2.70 else "+1.5 chutes"
+
+        partes.append(
+            f"{j['jogador']} ({j['media_chutes']} ch/j, {j['media_sot']} SOT/j → olhar {linha})"
+        )
+
+    return "; ".join(partes)
+
+
+def formatar_top_assist(ranking, limite=3):
+    if not ranking:
+        return ""
+
+    candidatos = sorted(
+        ranking,
+        key=lambda x: x["score_assist"],
+        reverse=True
+    )[:limite]
+
+    partes = []
+
+    for j in candidatos:
+        tag = " + bola parada" if j.get("bola_parada") else ""
+
+        partes.append(
+            f"{j['jogador']} ({j['passes_chave']} passes-chave, "
+            f"{j['assistencias']} assists{tag})"
+        )
+
+    return "; ".join(partes)
+
+
+def formatar_jogador_em_fase(ranking, limite=3):
+    if not ranking:
+        return ""
+
+    candidatos = sorted(
+        ranking,
+        key=lambda x: (x["gols"] * 2) + x["score_chute"],
+        reverse=True
+    )[:limite]
+
+    partes = []
+
+    for j in candidatos:
+        partes.append(
+            f"{j['jogador']} ({j['gols']} gols recentes, {j['media_chutes']} ch/j, {j['media_sot']} SOT/j)"
+        )
+
+    return "; ".join(partes)
+
+
+
 def extrair_odds_match_winner(item_odds):
     """
     Procura mercado Match Winner / vencedor.
@@ -1518,12 +1863,15 @@ def linhas_modelo_print_aberto(casa, visitante):
 # GERAÇÃO DOS CANDIDATOS
 # ============================================================
 
-def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None):
+def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None, rankings_por_time=None):
     if odds_por_fixture is None:
         odds_por_fixture = {}
 
     if medias_por_time is None:
         medias_por_time = {}
+
+    if rankings_por_time is None:
+        rankings_por_time = {}
 
     resultado = {
         # LUKA
@@ -1556,8 +1904,12 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None):
         "[FAIXA VIP] G7 — Resultado final + ambos marcam": [],
         "[FAIXA VIP] G7.2 — Zebra/visitante vencer + ambos marcam": [],
         "[FAIXA VIP] C7 — Chutes de jogadores | Procurar linhas": [],
+        "[FAIXA VIP] C7.1 — Jogador 1+ chute no alvo | ranking real": [],
+        "[FAIXA VIP] C7.2 — Jogador +1.5/+2.5 chutes | ranking real": [],
         "[FAIXA VIP] C8 — Assistências | Escanteio/falta/lateral": [],
-        "[LUKA] C5 — Assistência de bola parada | escanteio/falta/lateral": []
+        "[FAIXA VIP] C8.1 — Assistências reais | passes-chave/assists": [],
+        "[LUKA] C5 — Assistência de bola parada | escanteio/falta/lateral": [],
+        "[LUKA] C6 — Jogador em fase | gols e chutes recentes": []
     }
 
     for jogo in jogos:
@@ -1573,6 +1925,7 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None):
         jogo_txt = f"{hora} — {casa} x {visitante}"
         favorito_odd = obter_favorito_por_odd(jogo, odds_por_fixture)
         medias_home, medias_away = obter_medias_jogo(jogo, medias_por_time)
+        rank_home, rank_away = obter_rank_jogadores_jogo(jogo, rankings_por_time)
 
         # ====================================================
         # LUKA A — CANTOS 10 MIN
@@ -1912,20 +2265,50 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None):
 
         for time_forte in times_no_jogo:
             emoji = "⚠️"
+            ranking_time = escolher_rank_do_time(time_forte, casa, visitante, rank_home, rank_away)
+
             adicionar_sem_duplicar(
                 resultado["[FAIXA VIP] C7 — Chutes de jogadores | Procurar linhas"],
                 f"{emoji} {jogo_txt} — procurar 2-3 jogadores do {time_forte} com +1.5/+2.5 chutes; priorizar atacantes, pontas, meia finalizador e batedor de falta"
             )
+
+            top_sot = formatar_top_sot(ranking_time)
+            if top_sot:
+                adicionar_sem_duplicar(
+                    resultado["[FAIXA VIP] C7.1 — Jogador 1+ chute no alvo | ranking real"],
+                    f"{emoji} {jogo_txt} — {time_forte}: {top_sot}"
+                )
+
+            top_chutes = formatar_top_chutes(ranking_time)
+            if top_chutes:
+                adicionar_sem_duplicar(
+                    resultado["[FAIXA VIP] C7.2 — Jogador +1.5/+2.5 chutes | ranking real"],
+                    f"{emoji} {jogo_txt} — {time_forte}: {top_chutes}"
+                )
 
             adicionar_sem_duplicar(
                 resultado["[FAIXA VIP] C8 — Assistências | Escanteio/falta/lateral"],
                 f"{emoji} {jogo_txt} — {time_forte}: {sugestao_assistencia_time(time_forte)}"
             )
 
+            top_assist = formatar_top_assist(ranking_time)
+            if top_assist:
+                adicionar_sem_duplicar(
+                    resultado["[FAIXA VIP] C8.1 — Assistências reais | passes-chave/assists"],
+                    f"{emoji} {jogo_txt} — {time_forte}: {top_assist}"
+                )
+
             adicionar_sem_duplicar(
                 resultado["[LUKA] C5 — Assistência de bola parada | escanteio/falta/lateral"],
                 f"🧪 {jogo_txt} — {time_forte}: assistência de bola parada/lateral longo; combinar com atacante ou zagueiro forte de cabeça"
             )
+
+            fase = formatar_jogador_em_fase(ranking_time)
+            if fase:
+                adicionar_sem_duplicar(
+                    resultado["[LUKA] C6 — Jogador em fase | gols e chutes recentes"],
+                    f"🧪 {jogo_txt} — {time_forte}: {fase}"
+                )
 
     return resultado
 
@@ -1979,8 +2362,12 @@ def limitar_lista(dados):
         "[FAIXA VIP] G7 — Resultado final + ambos marcam": 10,
         "[FAIXA VIP] G7.2 — Zebra/visitante vencer + ambos marcam": 14,
         "[FAIXA VIP] C7 — Chutes de jogadores | Procurar linhas": 8,
+        "[FAIXA VIP] C7.1 — Jogador 1+ chute no alvo | ranking real": 10,
+        "[FAIXA VIP] C7.2 — Jogador +1.5/+2.5 chutes | ranking real": 10,
         "[FAIXA VIP] C8 — Assistências | Escanteio/falta/lateral": 10,
-        "[LUKA] C5 — Assistência de bola parada | escanteio/falta/lateral": 8
+        "[FAIXA VIP] C8.1 — Assistências reais | passes-chave/assists": 10,
+        "[LUKA] C5 — Assistência de bola parada | escanteio/falta/lateral": 8,
+        "[LUKA] C6 — Jogador em fase | gols e chutes recentes": 8
     }
 
     limitado = {}
@@ -2008,10 +2395,11 @@ if __name__ == "__main__":
     jogos = buscar_jogos_hoje()
     odds_por_fixture = buscar_odds_hoje()
     medias_por_time = buscar_medias_times_do_dia(jogos, odds_por_fixture)
+    rankings_por_time = buscar_rank_jogadores_times_do_dia(jogos, odds_por_fixture)
 
     if not jogos:
         print("Nenhum jogo encontrado.")
     else:
-        candidatos = gerar_candidatos(jogos, odds_por_fixture, medias_por_time)
+        candidatos = gerar_candidatos(jogos, odds_por_fixture, medias_por_time, rankings_por_time)
         candidatos = limitar_lista(candidatos)
         salvar_jogos_json(candidatos)
