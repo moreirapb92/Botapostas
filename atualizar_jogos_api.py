@@ -14,6 +14,7 @@ API_FOOTBALL_KEY = os.getenv("API_FOOTBALL_KEY", LOCAL_API_KEY)
 
 ARQUIVO_JOGOS = "jogos.json"
 URL_FIXTURES = "https://v3.football.api-sports.io/fixtures"
+URL_ODDS = "https://v3.football.api-sports.io/odds"
 
 HEADERS = {
     "x-apisports-key": API_FOOTBALL_KEY
@@ -74,6 +75,7 @@ RESULTADOS_FAVORITOS = [
 
 
 TIMES_DOMINIO_1T = [
+    # Elite Europa
     "Manchester City", "Arsenal", "Liverpool", "Tottenham", "Chelsea",
     "Bayern Munich", "Bayern München", "Borussia Dortmund", "RB Leipzig",
     "Bayer Leverkusen", "TSG Hoffenheim", "Hoffenheim",
@@ -84,22 +86,28 @@ TIMES_DOMINIO_1T = [
     "Porto", "Ajax", "PSV Eindhoven", "Feyenoord",
 
     "Napoli", "Roma", "Inter", "AC Milan", "Atalanta", "Lazio",
+    "Bologna", "Rayo Vallecano", "Millwall",
 
+    # Brasil / América do Sul
     "Flamengo", "Palmeiras", "Botafogo", "Atlético Mineiro",
     "Atletico Mineiro", "Cruzeiro", "Bahia", "CRB",
 
-    "River Plate", "Boca Juniors"
+    "River Plate", "Boca Juniors", "Independiente", "Racing Club"
 ]
 
 
 
 
 TIMES_DOMINIO_1T_AGRESSIVO = [
+    # Modelo print forte: linhas altas, 5 pernas
     "Manchester City", "Arsenal", "Liverpool", "Tottenham",
     "Real Madrid", "Barcelona", "PSG", "Paris Saint Germain",
     "Bayern Munich", "Bayern München", "Benfica", "Sporting CP",
     "FC Porto", "Porto", "TSG Hoffenheim", "Hoffenheim",
-    "River Plate", "Flamengo", "CRB"
+
+    # Times que apareceram ou combinam com o padrão Faixa VIP
+    "Napoli", "Roma", "Atalanta", "Bologna", "Rayo Vallecano",
+    "Millwall", "River Plate", "Flamengo", "CRB", "Bahia", "Cruzeiro"
 ]
 
 TIMES_BTTS_VENCER = [
@@ -599,6 +607,237 @@ def buscar_jogos_hoje():
     return dados.get("response", [])
 
 
+def converter_odd(valor):
+    try:
+        return float(str(valor).replace(",", "."))
+    except Exception:
+        return None
+
+
+def buscar_odds_hoje():
+    """
+    Busca odds pré-jogo de vencedor da partida.
+    Se a API/conta não liberar odds, o robô continua funcionando pelo modo antigo.
+    """
+    hoje = datetime.now().strftime("%Y-%m-%d")
+
+    odds_por_fixture = {}
+    pagina = 1
+    total_paginas = 1
+
+    while pagina <= total_paginas and pagina <= 5:
+        params = {
+            "date": hoje,
+            "timezone": "America/Sao_Paulo",
+            "bet": 1,
+            "page": pagina
+        }
+
+        try:
+            resposta = requests.get(
+                URL_ODDS,
+                headers=HEADERS,
+                params=params,
+                timeout=30
+            )
+        except Exception as erro:
+            print("Aviso: não consegui buscar odds.")
+            print(erro)
+            return odds_por_fixture
+
+        if resposta.status_code != 200:
+            print("Aviso: odds não disponíveis ou erro na API de odds.")
+            print(resposta.status_code)
+            print(resposta.text)
+            return odds_por_fixture
+
+        dados = resposta.json()
+
+        erros = dados.get("errors")
+        if erros:
+            print("Aviso: API retornou erro nas odds, seguindo sem odds.")
+            print(erros)
+            return odds_por_fixture
+
+        paging = dados.get("paging", {})
+        total_paginas = int(paging.get("total", 1) or 1)
+
+        for item in dados.get("response", []):
+            fixture = item.get("fixture", {})
+            fixture_id = fixture.get("id")
+
+            if not fixture_id:
+                continue
+
+            odds_match = extrair_odds_match_winner(item)
+
+            if odds_match:
+                odds_por_fixture[fixture_id] = odds_match
+
+        pagina += 1
+
+    print(f"Odds carregadas para {len(odds_por_fixture)} jogos.")
+    return odds_por_fixture
+
+
+def extrair_odds_match_winner(item_odds):
+    """
+    Procura mercado Match Winner / vencedor.
+    Retorna odds Home, Draw e Away do primeiro bookmaker que tiver esse mercado.
+    """
+    for bookmaker in item_odds.get("bookmakers", []):
+        nome_bookmaker = bookmaker.get("name", "")
+
+        for bet in bookmaker.get("bets", []):
+            bet_id = bet.get("id")
+            bet_name = normalizar(bet.get("name", ""))
+
+            if bet_id != 1 and "match winner" not in bet_name and "winner" not in bet_name:
+                continue
+
+            resultado = {
+                "bookmaker": nome_bookmaker,
+                "home": None,
+                "draw": None,
+                "away": None
+            }
+
+            for valor in bet.get("values", []):
+                nome = normalizar(valor.get("value", ""))
+                odd = converter_odd(valor.get("odd"))
+
+                if odd is None:
+                    continue
+
+                if nome in ["home", "casa", "1"]:
+                    resultado["home"] = odd
+                elif nome in ["draw", "empate", "x"]:
+                    resultado["draw"] = odd
+                elif nome in ["away", "fora", "2"]:
+                    resultado["away"] = odd
+
+            if resultado["home"] or resultado["away"]:
+                return resultado
+
+    return None
+
+
+def obter_favorito_por_odd(jogo, odds_por_fixture):
+    fixture_id = jogo.get("fixture", {}).get("id")
+    odds = odds_por_fixture.get(fixture_id)
+
+    if not odds:
+        return None
+
+    casa = nome_time(jogo, "home")
+    visitante = nome_time(jogo, "away")
+
+    odd_casa = odds.get("home")
+    odd_visitante = odds.get("away")
+
+    if odd_casa is None or odd_visitante is None:
+        return None
+
+    if odd_casa <= odd_visitante:
+        return {
+            "time": casa,
+            "adversario": visitante,
+            "lado": "home",
+            "odd": odd_casa,
+            "odd_rival": odd_visitante,
+            "bookmaker": odds.get("bookmaker", "")
+        }
+
+    return {
+        "time": visitante,
+        "adversario": casa,
+        "lado": "away",
+        "odd": odd_visitante,
+        "odd_rival": odd_casa,
+        "bookmaker": odds.get("bookmaker", "")
+    }
+
+
+def emoji_por_odd_favorito(odd):
+    if odd <= 1.60:
+        return "🔥"
+    if odd <= 2.10:
+        return "⚠️"
+    return "🧪"
+
+
+def faixa_por_odd_favorito(odd):
+    if odd <= 1.60:
+        return "favorito forte"
+    if odd <= 2.10:
+        return "favorito médio"
+    if odd <= 2.50:
+        return "favorito leve"
+    return "jogo equilibrado"
+
+
+def linhas_h_por_odd(time_forte, adversario, odd):
+    """
+    Linhas sugeridas pelo nível de favoritismo real.
+    Se a odd é baixa, aceita linha mais pesada.
+    Se a odd é perto de 2, usa linhas mais leves.
+    """
+    if odd <= 1.60:
+        return (
+            f"{time_forte} +7.5/+8.5 chutes 1T; "
+            f"{adversario} -5.5/-7.5 chutes 1T; "
+            f"{time_forte} +3/+4 escanteios 1T; "
+            f"{adversario} -2/-3 escanteios 1T"
+        )
+
+    if odd <= 2.10:
+        return (
+            f"{time_forte} +5.5/+6.5 chutes 1T; "
+            f"{adversario} -6.5/-7.5 chutes 1T; "
+            f"{time_forte} +2/+3 escanteios 1T; "
+            f"{adversario} -2/-3 escanteios 1T"
+        )
+
+    return (
+        f"{time_forte} +4.5/+5.5 chutes 1T; "
+        f"{adversario} -7.5 chutes 1T; "
+        f"{time_forte} +1/+2 escanteios 1T; "
+        f"{adversario} -2/-3 escanteios 1T"
+    )
+
+
+def linha_h2_por_odd(time_forte, adversario, odd):
+    if odd <= 1.60:
+        return (
+            f"{time_forte} +2.5 chutes ao gol 1T "
+            f"ou {adversario} -1.5 chutes ao gol 1T"
+        )
+
+    return (
+        f"{time_forte} +1.5/+2.5 chutes ao gol 1T "
+        f"ou {adversario} -1.5 chutes ao gol 1T"
+    )
+
+
+def linhas_h21_por_odd(time_forte, adversario, odd):
+    if odd <= 1.60:
+        return (
+            f"{time_forte} +8.5 chutes 1T; "
+            f"{adversario} -7.5 chutes 1T; "
+            f"{time_forte} +3 escanteios 1T; "
+            f"{adversario} -2 escanteios 1T; "
+            f"{time_forte} +2.5 chutes ao gol 1T"
+        )
+
+    return (
+        f"{time_forte} +6.5 chutes 1T; "
+        f"{adversario} -7.5 chutes 1T; "
+        f"{time_forte} +2 escanteios 1T; "
+        f"{adversario} -2 escanteios 1T; "
+        f"{time_forte} +1.5/+2.5 chutes ao gol 1T"
+    )
+
+
 def nome_time(jogo, lado):
     return jogo["teams"][lado]["name"]
 
@@ -688,26 +927,47 @@ def linhas_modelo_print_h2(time_forte, adversario):
 
 def deve_sugerir_modelo_print_h2(time_forte, adversario):
     """
-    Não manda H2.1 em qualquer jogo.
-    Preferência: time agressivo/dominante contra rival que não é outro gigante.
+    H2.1 — Modelo print Faixa VIP.
+    Antes estava restritivo demais e puxava poucos jogos.
+    Agora:
+    - sugere para todo time cadastrado como domínio 1T;
+    - dá linha forte se o time está em TIMES_DOMINIO_1T_AGRESSIVO;
+    - evita apenas casos em que o adversário também é muito forte e o time escolhido não é agressivo.
     """
     if not eh_time_dominio_1t(time_forte):
         return False
 
-    if eh_time_dominio_1t_agressivo(time_forte) and not eh_time_dominio_1t_agressivo(adversario):
-        return True
+    if eh_time_dominio_1t_agressivo(adversario) and not eh_time_dominio_1t_agressivo(time_forte):
+        return False
 
-    if eh_time_dominio_1t_agressivo(time_forte) and not eh_favorito_resultado(adversario):
-        return True
+    return True
 
-    return False
+
+def linhas_modelo_print_aberto(casa, visitante):
+    """
+    H0 — Modelo aberto Faixa VIP.
+    Não tenta adivinhar o favorito só por lista fixa.
+    A ideia é mandar o jogo e orientar a leitura no app/bet:
+    escolher o favorito real do mercado ou o time que deve começar pressionando.
+    """
+    return (
+        "no app, escolher o favorito/mandante dominante ou o time com menor odd; "
+        "montar: TIME ESCOLHIDO +6.5/+8.5 chutes 1T; "
+        "RIVAL -6.5/-7.5 chutes 1T; "
+        "TIME ESCOLHIDO +2/+3 escanteios 1T; "
+        "RIVAL -2/-3 escanteios 1T; "
+        "opcional agressivo: TIME ESCOLHIDO +1.5/+2.5 chutes ao gol 1T"
+    )
 
 
 # ============================================================
 # GERAÇÃO DOS CANDIDATOS
 # ============================================================
 
-def gerar_candidatos(jogos):
+def gerar_candidatos(jogos, odds_por_fixture=None):
+    if odds_por_fixture is None:
+        odds_por_fixture = {}
+
     resultado = {
         # LUKA
         "[LUKA] A1 — Cantos 10 min | Mandante forte": [],
@@ -728,6 +988,8 @@ def gerar_candidatos(jogos):
         "[LUKA] E2 — Resultado Final | Empate candidato": [],
 
         # FAIXA VIP
+        "[FAIXA VIP] H0 — Favorito por odd | Modelo aberto": [],
+        "[FAIXA VIP] H0 — Modelo aberto | Ler favorito no app": [],
         "[FAIXA VIP] H1 — Domínio estatístico 1T | Chutes + escanteios": [],
         "[FAIXA VIP] H2 — Domínio 1T agressivo | Inclui chutes ao gol": [],
         "[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T": [],
@@ -747,6 +1009,7 @@ def gerar_candidatos(jogos):
             continue
 
         jogo_txt = f"{hora} — {casa} x {visitante}"
+        favorito_odd = obter_favorito_por_odd(jogo, odds_por_fixture)
 
         # ====================================================
         # LUKA A — CANTOS 10 MIN
@@ -845,6 +1108,10 @@ def gerar_candidatos(jogos):
         if eh_favorito(visitante):
             times_no_jogo.append(visitante)
 
+        if favorito_odd and favorito_odd["odd"] <= 2.50:
+            if favorito_odd["time"] not in times_no_jogo:
+                times_no_jogo.append(favorito_odd["time"])
+
         for time_forte in times_no_jogo:
             emoji = prioridade_jogador(time_forte)
 
@@ -906,6 +1173,13 @@ def gerar_candidatos(jogos):
                 f"{emoji} {jogo_txt} — olhar {visitante} vencer / pagamento antecipado"
             )
 
+        if favorito_odd and favorito_odd["odd"] <= 2.50 and not eh_jogo_equilibrado(casa, visitante):
+            emoji = emoji_por_odd_favorito(favorito_odd["odd"])
+            adicionar_sem_duplicar(
+                resultado["[LUKA] E1 — Resultado Final | Favoritos para vencer"],
+                f"{emoji} {jogo_txt} — favorito por odd: {favorito_odd['time']} @{favorito_odd['odd']:.2f} vencer / pagamento antecipado"
+            )
+
         # ====================================================
         # LUKA E2 — EMPATE CANDIDATO
         # ====================================================
@@ -921,6 +1195,41 @@ def gerar_candidatos(jogos):
         # ====================================================
 
         if eh_liga_para_dominio_1t(liga, pais):
+            if favorito_odd:
+                time_odd = favorito_odd["time"]
+                adversario_odd = favorito_odd["adversario"]
+                odd_fav = favorito_odd["odd"]
+                emoji_odd = emoji_por_odd_favorito(odd_fav)
+                faixa_odd = faixa_por_odd_favorito(odd_fav)
+
+                if odd_fav <= 2.50:
+                    adicionar_sem_duplicar(
+                        resultado["[FAIXA VIP] H0 — Favorito por odd | Modelo aberto"],
+                        f"{emoji_odd} {jogo_txt} — favorito por odd: {time_odd} @{odd_fav:.2f} ({faixa_odd}); olhar {linhas_h_por_odd(time_odd, adversario_odd, odd_fav)}"
+                    )
+
+                if odd_fav <= 2.10:
+                    adicionar_sem_duplicar(
+                        resultado["[FAIXA VIP] H1 — Domínio estatístico 1T | Chutes + escanteios"],
+                        f"{emoji_odd} {jogo_txt} — por odd: {time_odd} @{odd_fav:.2f}; olhar {linhas_h_por_odd(time_odd, adversario_odd, odd_fav)}"
+                    )
+
+                    adicionar_sem_duplicar(
+                        resultado["[FAIXA VIP] H2 — Domínio 1T agressivo | Inclui chutes ao gol"],
+                        f"{emoji_odd} {jogo_txt} — por odd: H1 + olhar {linha_h2_por_odd(time_odd, adversario_odd, odd_fav)}"
+                    )
+
+                if odd_fav <= 2.10:
+                    adicionar_sem_duplicar(
+                        resultado["[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T"],
+                        f"{emoji_odd} {jogo_txt} — por odd: {linhas_h21_por_odd(time_odd, adversario_odd, odd_fav)}"
+                    )
+            else:
+                adicionar_sem_duplicar(
+                    resultado["[FAIXA VIP] H0 — Modelo aberto | Ler favorito no app"],
+                    f"🧪 {jogo_txt} — sem odd na API; {linhas_modelo_print_aberto(casa, visitante)}"
+                )
+
             # Mandante dominante
             if eh_time_dominio_1t(casa):
                 emoji = prioridade_dominio_1t(casa, liga, pais)
@@ -939,7 +1248,7 @@ def gerar_candidatos(jogos):
                 if deve_sugerir_modelo_print_h2(casa, visitante):
                     adicionar_sem_duplicar(
                         resultado["[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T"],
-                        f"{emoji} {jogo_txt} — replicar modelo print: {linhas_modelo_print_h2(casa, visitante)}"
+                        f"{emoji} {jogo_txt} — modelo print Faixa VIP: {linhas_modelo_print_h2(casa, visitante)}"
                     )
 
             # Visitante dominante
@@ -960,7 +1269,7 @@ def gerar_candidatos(jogos):
                 if deve_sugerir_modelo_print_h2(visitante, casa):
                     adicionar_sem_duplicar(
                         resultado["[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T"],
-                        f"{emoji} {jogo_txt} — replicar modelo print: {linhas_modelo_print_h2(visitante, casa)}"
+                        f"{emoji} {jogo_txt} — modelo print Faixa VIP: {linhas_modelo_print_h2(visitante, casa)}"
                     )
 
                 if not eh_favorito_resultado(visitante) or eh_jogo_equilibrado(casa, visitante):
@@ -980,7 +1289,14 @@ def gerar_candidatos(jogos):
         # FAIXA VIP G7 — RESULTADO + AMBOS MARCAM
         # ====================================================
 
-        if eh_liga_aberta_gols(liga, pais) or eh_time_btts_vencer(casa) or eh_time_btts_vencer(visitante):
+        if eh_liga_aberta_gols(liga, pais) or eh_time_btts_vencer(casa) or eh_time_btts_vencer(visitante) or favorito_odd:
+            if favorito_odd and favorito_odd["odd"] <= 2.80:
+                emoji = emoji_por_odd_favorito(favorito_odd["odd"])
+                adicionar_sem_duplicar(
+                    resultado["[FAIXA VIP] G7 — Resultado final + ambos marcam"],
+                    f"{emoji} {jogo_txt} — favorito por odd: {favorito_odd['time']} @{favorito_odd['odd']:.2f} vencer + ambos marcam"
+                )
+
             if eh_time_btts_vencer(casa) or eh_favorito_resultado(casa):
                 emoji = "🔥" if eh_time_btts_vencer(casa) else "⚠️"
                 adicionar_sem_duplicar(
@@ -1054,9 +1370,11 @@ def limitar_lista(dados):
         "[LUKA] E2 — Resultado Final | Empate candidato": 6,
 
         # FAIXA VIP
+        "[FAIXA VIP] H0 — Favorito por odd | Modelo aberto": 18,
+        "[FAIXA VIP] H0 — Modelo aberto | Ler favorito no app": 12,
         "[FAIXA VIP] H1 — Domínio estatístico 1T | Chutes + escanteios": 10,
         "[FAIXA VIP] H2 — Domínio 1T agressivo | Inclui chutes ao gol": 8,
-        "[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T": 6,
+        "[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T": 12,
         "[FAIXA VIP] H3 — Domínio 1T invertido | Visitante/zebra pressionando": 6,
         "[FAIXA VIP] G7 — Resultado final + ambos marcam": 10,
         "[FAIXA VIP] C7 — Chutes de jogadores | Procurar linhas": 8
@@ -1085,10 +1403,11 @@ def salvar_jogos_json(dados):
 
 if __name__ == "__main__":
     jogos = buscar_jogos_hoje()
+    odds_por_fixture = buscar_odds_hoje()
 
     if not jogos:
         print("Nenhum jogo encontrado.")
     else:
-        candidatos = gerar_candidatos(jogos)
+        candidatos = gerar_candidatos(jogos, odds_por_fixture)
         candidatos = limitar_lista(candidatos)
         salvar_jogos_json(candidatos)
