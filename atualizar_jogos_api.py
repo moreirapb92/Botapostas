@@ -17,6 +17,7 @@ URL_FIXTURES = "https://v3.football.api-sports.io/fixtures"
 URL_ODDS = "https://v3.football.api-sports.io/odds"
 URL_FIXTURE_STATS = "https://v3.football.api-sports.io/fixtures/statistics"
 URL_FIXTURE_PLAYERS = "https://v3.football.api-sports.io/fixtures/players"
+URL_SQUADS = "https://v3.football.api-sports.io/players/squads"
 
 HEADERS = {
     "x-apisports-key": API_FOOTBALL_KEY
@@ -310,6 +311,362 @@ def eh_time_btts_vencer(nome_time):
 def adicionar_sem_duplicar(lista, item):
     if item not in lista:
         lista.append(item)
+
+
+# ============================================================
+# LUKA C9 — ELENCOS ATUALIZADOS + GOLS/ASSISTÊNCIAS
+# ============================================================
+# Objetivo: parar de mandar jogador antigo. O bot pega o ID real
+# do time no fixture do dia, busca o elenco atual em /players/squads
+# e só sugere nomes que aparecem no elenco. Se a API não devolver
+# elenco, a sugestão vem marcada como "conferir no app".
+
+TIMES_PRIORITARIOS_C9 = [
+    # Inglaterra
+    "Liverpool", "Manchester City", "Arsenal", "Chelsea",
+    "Manchester United", "Tottenham", "Aston Villa", "Newcastle",
+    "West Ham", "Brighton",
+
+    # Espanha
+    "Real Madrid", "Barcelona", "Atletico Madrid", "Atlético Madrid",
+    "Villarreal", "Sevilla", "Valencia", "Real Sociedad",
+    "Athletic Club", "Girona", "Real Betis",
+
+    # França
+    "Paris Saint Germain", "PSG", "Lyon", "Marseille", "Monaco",
+    "Lille", "Rennes", "Nice", "Lens",
+
+    # Alemanha
+    "Bayern Munich", "Bayern München", "Borussia Dortmund", "BVB",
+    "Bayer Leverkusen", "RB Leipzig", "Eintracht Frankfurt",
+    "Stuttgart", "Wolfsburg",
+
+    # Itália
+    "Inter", "Inter Milan", "Internazionale", "AC Milan", "Juventus",
+    "Napoli", "Roma", "Atalanta", "Lazio", "Fiorentina",
+
+    # Portugal / Holanda / Bélgica / Turquia
+    "Benfica", "Sporting CP", "Sporting Lisbon", "FC Porto", "Porto", "SC Braga",
+    "Ajax", "PSV Eindhoven", "PSV", "Feyenoord", "AZ Alkmaar",
+    "Club Brugge", "Anderlecht", "Genk", "Union Saint-Gilloise", "Union St. Gilloise",
+    "Galatasaray", "Fenerbahce", "Fenerbahçe", "Besiktas", "Beşiktaş",
+
+    # Brasil
+    "Flamengo", "Palmeiras", "Botafogo", "Fluminense", "São Paulo", "Sao Paulo",
+    "Corinthians", "Santos", "Grêmio", "Gremio", "Internacional", "Cruzeiro",
+    "Atlético Mineiro", "Atletico Mineiro", "Bahia", "Fortaleza", "Vasco DA Gama", "Vasco da Gama",
+
+    # Argentina / América
+    "River Plate", "Boca Juniors", "Racing Club", "Independiente", "San Lorenzo",
+    "Inter Miami", "Los Angeles FC", "LAFC", "New York Red Bulls", "Orlando City",
+    "Columbus Crew", "FC Cincinnati",
+
+    # Arábia / outros
+    "Al-Hilal", "Al Hilal", "Al Nassr", "Al-Ittihad", "Al Ittihad", "Al Ahli", "Al Ahli Jeddah"
+]
+
+# Perfis manuais: usados como prioridade, mas SEMPRE filtrados pelo elenco atual.
+# Se o jogador não estiver no squad da API, ele é cortado automaticamente.
+JOGADORES_PERFIL_C9 = {
+    "Liverpool": {
+        "marcadores": ["Mohamed Salah", "Salah", "Cody Gakpo", "Gakpo", "Diogo Jota", "Jota"],
+        "assistencias": ["Dominik Szoboszlai", "Szoboszlai", "Mohamed Salah", "Salah", "Alexis Mac Allister", "Mac Allister", "Andrew Robertson", "Robertson"],
+        "cabeca": ["Virgil van Dijk", "Van Dijk", "Ibrahima Konaté", "Konate", "Cody Gakpo", "Gakpo"],
+        "fora_area": ["Alexis Mac Allister", "Mac Allister", "Dominik Szoboszlai", "Szoboszlai"]
+    },
+    "Aston Villa": {
+        "marcadores": ["Ollie Watkins", "Watkins"],
+        "assistencias": ["Morgan Rogers", "Rogers", "John McGinn", "McGinn", "Youri Tielemans", "Tielemans"],
+        "cabeca": ["Ollie Watkins", "Watkins", "Pau Torres"],
+        "fora_area": ["Morgan Rogers", "Rogers", "Youri Tielemans", "Tielemans"]
+    },
+    "Paris Saint Germain": {
+        "marcadores": ["Kvaratskhelia", "Khvicha Kvaratskhelia", "Gonçalo Ramos", "Goncalo Ramos", "Barcola", "Dembélé", "Dembele"],
+        "assistencias": ["Ousmane Dembélé", "Dembele", "Dembélé", "Vitinha", "Hakimi", "Barcola"],
+        "cabeca": ["Gonçalo Ramos", "Goncalo Ramos", "Marquinhos", "Pacho"],
+        "fora_area": ["Vitinha", "Dembélé", "Dembele"]
+    },
+    "PSG": {
+        "marcadores": ["Kvaratskhelia", "Khvicha Kvaratskhelia", "Gonçalo Ramos", "Goncalo Ramos", "Barcola", "Dembélé", "Dembele"],
+        "assistencias": ["Ousmane Dembélé", "Dembele", "Dembélé", "Vitinha", "Hakimi", "Barcola"],
+        "cabeca": ["Gonçalo Ramos", "Goncalo Ramos", "Marquinhos", "Pacho"],
+        "fora_area": ["Vitinha", "Dembélé", "Dembele"]
+    },
+    "Real Madrid": {
+        "marcadores": ["Kylian Mbappé", "Mbappe", "Vinicius", "Vinícius", "Rodrygo", "Bellingham"],
+        "assistencias": ["Vinicius", "Vinícius", "Rodrygo", "Bellingham", "Valverde", "Arda Güler", "Arda Guler"],
+        "cabeca": ["Rüdiger", "Rudiger", "Militão", "Militao", "Bellingham"],
+        "fora_area": ["Valverde", "Bellingham", "Rodrygo", "Arda Güler", "Arda Guler"]
+    },
+    "Barcelona": {
+        "marcadores": ["Lewandowski", "Ferran Torres", "Raphinha", "Lamine Yamal", "Yamal"],
+        "assistencias": ["Lamine Yamal", "Yamal", "Raphinha", "Pedri", "Balde"],
+        "cabeca": ["Lewandowski", "Araujo", "Koundé", "Kounde"],
+        "fora_area": ["Raphinha", "Pedri", "Fermín", "Fermin"]
+    },
+    "Manchester City": {
+        "marcadores": ["Erling Haaland", "Haaland", "Foden", "Doku", "Savinho", "Cherki"],
+        "assistencias": ["Foden", "Doku", "Bernardo Silva", "Savinho", "Cherki"],
+        "cabeca": ["Haaland", "Rúben Dias", "Ruben Dias", "Gvardiol"],
+        "fora_area": ["Foden", "Bernardo Silva", "Cherki"]
+    },
+    "Arsenal": {
+        "marcadores": ["Saka", "Martinelli", "Trossard", "Havertz", "Gyökeres", "Gyokeres"],
+        "assistencias": ["Saka", "Odegaard", "Ødegaard", "Rice", "Martinelli", "Trossard"],
+        "cabeca": ["Gabriel Magalhães", "Gabriel Magalhaes", "Saliba", "Havertz", "Gyökeres", "Gyokeres"],
+        "fora_area": ["Rice", "Odegaard", "Ødegaard", "Saka"]
+    },
+    "Chelsea": {
+        "marcadores": ["Palmer", "Nicolas Jackson", "Nkunku", "Pedro Neto"],
+        "assistencias": ["Palmer", "Enzo Fernandez", "Reece James", "Pedro Neto"],
+        "cabeca": ["Nicolas Jackson", "Disasi", "Colwill"],
+        "fora_area": ["Palmer", "Enzo Fernandez"]
+    },
+    "Bayern Munich": {
+        "marcadores": ["Harry Kane", "Kane", "Musiala", "Olise", "Sané", "Sane"],
+        "assistencias": ["Olise", "Musiala", "Kimmich", "Gnabry", "Sané", "Sane"],
+        "cabeca": ["Kane", "Kim Min-Jae", "Upamecano"],
+        "fora_area": ["Olise", "Musiala", "Kimmich"]
+    },
+    "Borussia Dortmund": {
+        "marcadores": ["Guirassy", "Adeyemi", "Brandt", "Malen"],
+        "assistencias": ["Brandt", "Adeyemi", "Ryerson", "Gross", "Groß"],
+        "cabeca": ["Guirassy", "Schlotterbeck", "Süle", "Sule"],
+        "fora_area": ["Brandt", "Adeyemi", "Gross", "Groß"]
+    },
+    "BVB": {
+        "marcadores": ["Guirassy", "Adeyemi", "Brandt", "Malen"],
+        "assistencias": ["Brandt", "Adeyemi", "Ryerson", "Gross", "Groß"],
+        "cabeca": ["Guirassy", "Schlotterbeck", "Süle", "Sule"],
+        "fora_area": ["Brandt", "Adeyemi", "Gross", "Groß"]
+    },
+    "Flamengo": {
+        "marcadores": ["Pedro", "Bruno Henrique", "Arrascaeta", "Luiz Araújo", "Luiz Araujo"],
+        "assistencias": ["Arrascaeta", "De La Cruz", "Carrascal", "Luiz Araújo", "Luiz Araujo", "Gerson"],
+        "cabeca": ["Pedro", "Bruno Henrique", "Léo Pereira", "Leo Pereira"],
+        "fora_area": ["Arrascaeta", "De La Cruz", "Gerson", "Carrascal"]
+    },
+    "Palmeiras": {
+        "marcadores": ["Vitor Roque", "Flaco López", "Flaco Lopez", "Estevão", "Estevao", "Raphael Veiga"],
+        "assistencias": ["Raphael Veiga", "Estevão", "Estevao", "Piquerez", "Mayke"],
+        "cabeca": ["Gustavo Gómez", "Gustavo Gomez", "Murilo", "Flaco López", "Flaco Lopez"],
+        "fora_area": ["Raphael Veiga", "Estevão", "Estevao"]
+    },
+    "Botafogo": {
+        "marcadores": ["Igor Jesus", "Savarino", "Almada", "Tiquinho"],
+        "assistencias": ["Savarino", "Almada", "Marlon Freitas", "Cuiabano"],
+        "cabeca": ["Igor Jesus", "Bastos", "Alexander Barboza"],
+        "fora_area": ["Almada", "Savarino", "Marlon Freitas"]
+    },
+    "Inter Miami": {
+        "marcadores": ["Messi", "Luis Suárez", "Luis Suarez", "Suárez", "Suarez", "Berterame"],
+        "assistencias": ["Messi", "Jordi Alba", "Alba", "Busquets"],
+        "cabeca": ["Luis Suárez", "Luis Suarez", "Berterame"],
+        "fora_area": ["Messi"]
+    }
+}
+
+SQUAD_CACHE = {}
+
+
+def eh_time_prioritario_c9(nome_time):
+    nome = normalizar(nome_time)
+    for referencia in TIMES_PRIORITARIOS_C9:
+        ref = normalizar(referencia)
+        if nome == ref or ref in nome or nome in ref:
+            return True
+    return False
+
+
+def buscar_elenco_atual(team_id):
+    """Busca elenco atual do time via API-Football /players/squads."""
+    if team_id in SQUAD_CACHE:
+        return SQUAD_CACHE[team_id]
+
+    try:
+        resposta = requests.get(
+            URL_SQUADS,
+            headers=HEADERS,
+            params={"team": team_id},
+            timeout=30
+        )
+
+        if resposta.status_code != 200:
+            SQUAD_CACHE[team_id] = []
+            return []
+
+        dados = resposta.json().get("response", [])
+        if not dados:
+            SQUAD_CACHE[team_id] = []
+            return []
+
+        jogadores = []
+        for item in dados[0].get("players", []):
+            jogadores.append({
+                "id": item.get("id"),
+                "name": item.get("name", ""),
+                "position": item.get("position", "") or "",
+                "number": item.get("number")
+            })
+
+        SQUAD_CACHE[team_id] = jogadores
+        return jogadores
+
+    except Exception as erro:
+        print(f"Aviso: erro ao buscar elenco do time {team_id}: {erro}")
+        SQUAD_CACHE[team_id] = []
+        return []
+
+
+def buscar_elencos_prioritarios_do_dia(jogos):
+    elencos = {}
+    for jogo in jogos:
+        for lado in ["home", "away"]:
+            time = nome_time(jogo, lado)
+            if not eh_time_prioritario_c9(time):
+                continue
+            team_id = id_time(jogo, lado)
+            if team_id not in elencos:
+                elencos[team_id] = buscar_elenco_atual(team_id)
+    return elencos
+
+
+def nome_em_elenco(nome, elenco):
+    if not nome or not elenco:
+        return False
+    n = normalizar(nome)
+    for jogador in elenco:
+        j = normalizar(jogador.get("name", ""))
+        if not j:
+            continue
+        if n == j or n in j or j in n:
+            return True
+    return False
+
+
+def nomes_por_posicao(elenco, posicoes, limite=4):
+    saida = []
+    posicoes_n = [normalizar(p) for p in posicoes]
+    for jogador in elenco:
+        pos = normalizar(jogador.get("position", ""))
+        if any(p in pos for p in posicoes_n):
+            nome = jogador.get("name", "")
+            if nome and nome not in saida:
+                saida.append(nome)
+        if len(saida) >= limite:
+            break
+    return saida
+
+
+def obter_perfil_time_c9(nome_time):
+    for ref, perfil in JOGADORES_PERFIL_C9.items():
+        if eh_time_exato(nome_time, ref) or normalizar(ref) in normalizar(nome_time) or normalizar(nome_time) in normalizar(ref):
+            return perfil
+    return {}
+
+
+def filtrar_lista_por_elenco(lista, elenco, limite=4):
+    if not lista:
+        return []
+    if not elenco:
+        # Fallback: API não devolveu elenco; mandar poucos nomes e marcar no texto como conferência obrigatória.
+        return lista[:limite]
+
+    filtrados = []
+    for nome in lista:
+        if nome_em_elenco(nome, elenco) and nome not in filtrados:
+            filtrados.append(nome)
+        if len(filtrados) >= limite:
+            break
+    return filtrados
+
+
+def juntar_opcoes(opcoes, limite=3):
+    limpas = []
+    for item in opcoes:
+        if item and item not in limpas:
+            limpas.append(item)
+        if len(limpas) >= limite:
+            break
+    return limpas
+
+
+def gerar_perfis_c9_time(nome_time, elenco):
+    perfil = obter_perfil_time_c9(nome_time)
+
+    marcadores = filtrar_lista_por_elenco(perfil.get("marcadores", []), elenco, 4)
+    assistencias = filtrar_lista_por_elenco(perfil.get("assistencias", []), elenco, 4)
+    cabeca = filtrar_lista_por_elenco(perfil.get("cabeca", []), elenco, 3)
+    fora_area = filtrar_lista_por_elenco(perfil.get("fora_area", []), elenco, 3)
+
+    # Fallback por posição do elenco atual. Evita jogador transferido.
+    if elenco:
+        marcadores = juntar_opcoes(marcadores + nomes_por_posicao(elenco, ["Attacker", "Forward"], 4), 4)
+        assistencias = juntar_opcoes(assistencias + nomes_por_posicao(elenco, ["Midfielder", "Attacker", "Forward"], 4), 4)
+        cabeca = juntar_opcoes(cabeca + nomes_por_posicao(elenco, ["Defender", "Attacker", "Forward"], 3), 3)
+        fora_area = juntar_opcoes(fora_area + nomes_por_posicao(elenco, ["Midfielder"], 3), 3)
+
+    return {
+        "marcadores": marcadores,
+        "assistencias": assistencias,
+        "cabeca": cabeca,
+        "fora_area": fora_area,
+        "elenco_confirmado": bool(elenco)
+    }
+
+
+def montar_linhas_c9(jogo_txt, nome_time, perfis, adversario=None):
+    marcadores = perfis.get("marcadores", [])
+    assistencias = perfis.get("assistencias", [])
+    cabeca = perfis.get("cabeca", [])
+    fora_area = perfis.get("fora_area", [])
+    confirmado = perfis.get("elenco_confirmado", False)
+    aviso = "" if confirmado else " ⚠️ confirmar elenco/titularidade no app"
+
+    linhas = []
+
+    if marcadores and assistencias:
+        linhas.append({
+            "categoria": "[LUKA] C9 — Gols e assistências | elenco atualizado",
+            "texto": (
+                f"🔥 {jogo_txt} — {nome_time}: C9 pronto{aviso}; "
+                f"marcar: {', '.join(marcadores[:3])}; assistência: {', '.join(assistencias[:3])}. "
+                f"Montar: assistência + marcador ou 2 marcadores; odd alvo 4.00+"
+            )
+        })
+        linhas.append({
+            "categoria": "[LUKA] C4 — Roteiro de jogadores | Assistência + gol",
+            "texto": (
+                f"🔥 {jogo_txt} — {nome_time}: {assistencias[0]} assistência + "
+                f"{marcadores[0]} marcar; alternativa: {assistencias[1] if len(assistencias) > 1 else assistencias[0]} assistência + "
+                f"{marcadores[1] if len(marcadores) > 1 else marcadores[0]} marcar"
+            )
+        })
+
+    if marcadores and assistencias and len(marcadores) >= 2:
+        linhas.append({
+            "categoria": "[LUKA] C9.1 — Odd 20–60 | roteiro agressivo",
+            "texto": (
+                f"🧪 {jogo_txt} — odd alta controlada: {marcadores[0]} marcar + "
+                f"{marcadores[1]} marcar + {assistencias[0]} assistência; stake R$0,25/R$0,50"
+            )
+        })
+
+    if cabeca:
+        base_assist = assistencias[0] if assistencias else "batedor de escanteio/falta"
+        linhas.append({
+            "categoria": "[LUKA] C2 — Gol de Cabeça | Jogos para procurar",
+            "texto": f"🔥 {jogo_txt} — {nome_time}: olhar {cabeca[0]} cabeça; combinar {base_assist} assistência + {cabeca[0]} cabeça"
+        })
+
+    if fora_area:
+        linhas.append({
+            "categoria": "[LUKA] C3 — Gol de Fora da Área | Jogos para procurar",
+            "texto": f"🧪 {jogo_txt} — {nome_time}: olhar fora da área de {', '.join(fora_area[:2])}"
+        })
+
+    return linhas
+
 
 
 # ============================================================
@@ -1863,7 +2220,7 @@ def linhas_modelo_print_aberto(casa, visitante):
 # GERAÇÃO DOS CANDIDATOS
 # ============================================================
 
-def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None, rankings_por_time=None):
+def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None, rankings_por_time=None, elencos_por_time=None):
     if odds_por_fixture is None:
         odds_por_fixture = {}
 
@@ -1873,12 +2230,14 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None, ranking
     if rankings_por_time is None:
         rankings_por_time = {}
 
+    if elencos_por_time is None:
+        elencos_por_time = {}
+
     resultado = {
         # LUKA
         "[LUKA] A1 — Cantos 10 min | Mandante forte": [],
         "[LUKA] A2 — Cantos 10 min | Visitante favorito": [],
 
-        "[LUKA] B1 — Cartões 1T | Ambos +0 cartão": [],
         "[LUKA] B4 — Cartões FT por time | +2/+3 cartões": [],
         "[LUKA] B5 — Cartões individuais | Clássico/jogo quente": [],
         "[FAIXA VIP] B_STATS — Médias reais | cartões FT e 2T": [],
@@ -1887,25 +2246,15 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None, ranking
         "[LUKA] C2 — Gol de Cabeça | Jogos para procurar": [],
         "[LUKA] C3 — Gol de Fora da Área | Jogos para procurar": [],
         "[LUKA] C4 — Roteiro de jogadores | Assistência + gol": [],
-
-        "[LUKA] D — Builder Favorito | Chute no alvo + domínio": [],
+        "[LUKA] C9 — Gols e assistências | elenco atualizado": [],
+        "[LUKA] C9.1 — Odd 20–60 | roteiro agressivo": [],
 
         "[LUKA] E1 — Resultado Final | Favoritos para vencer": [],
         "[LUKA] E2 — Resultado Final | Empate candidato": [],
 
         # FAIXA VIP
-        "[FAIXA VIP] H0 — Favorito por odd | Modelo aberto": [],
-        "[FAIXA VIP] H0 — Modelo aberto | Ler favorito no app": [],
-        "[FAIXA VIP] H1 — Domínio estatístico 1T | Chutes + escanteios": [],
-        "[FAIXA VIP] H2 — Domínio 1T agressivo | Inclui chutes ao gol": [],
-        "[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T": [],
-        "[FAIXA VIP] H_STATS — Médias reais | chutes e escanteios": [],
-        "[FAIXA VIP] H3 — Domínio 1T invertido | Visitante/zebra pressionando": [],
         "[FAIXA VIP] G7 — Resultado final + ambos marcam": [],
         "[FAIXA VIP] G7.2 — Zebra/visitante vencer + ambos marcam": [],
-        "[FAIXA VIP] C7 — Chutes de jogadores | Procurar linhas": [],
-        "[FAIXA VIP] C7.1 — Jogador 1+ chute no alvo | ranking real": [],
-        "[FAIXA VIP] C7.2 — Jogador +1.5/+2.5 chutes | ranking real": [],
         "[FAIXA VIP] C8 — Assistências | Escanteio/falta/lateral": [],
         "[FAIXA VIP] C8.1 — Assistências reais | passes-chave/assists": [],
         "[LUKA] C5 — Assistência de bola parada | escanteio/falta/lateral": [],
@@ -1952,11 +2301,6 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None, ranking
         if eh_liga_cartoes(liga, pais):
             emoji = prioridade_cartao(liga, pais)
 
-            adicionar_sem_duplicar(
-                resultado["[LUKA] B1 — Cartões 1T | Ambos +0 cartão"],
-                f"{emoji} {jogo_txt} — {liga} / {pais} — olhar ambos +0 cartão no 1T"
-            )
-
             if eh_classico_ou_quente(casa, visitante) or normalizar(pais) in [
                 "brazil", "spain", "italy", "argentina", "uruguay",
                 "paraguay", "turkey", "scotland", "france"
@@ -1982,43 +2326,6 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None, ranking
                     resultado["[LUKA] B5 — Cartões individuais | Clássico/jogo quente"],
                     f"🔥 {jogo_txt} — olhar 3-4 jogadores para cartão individual"
                 )
-
-        # ====================================================
-        # LUKA C — JOGADORES ESPECIAIS CADASTRADOS
-        # ====================================================
-
-        for time_ref, sugestoes in TIMES_JOGADORES_ESPECIAIS.items():
-            time_no_jogo = (
-                eh_time_exato(casa, time_ref)
-                or eh_time_exato(visitante, time_ref)
-            )
-
-            if not time_no_jogo:
-                continue
-
-            emoji_jogador = prioridade_jogador(time_ref)
-
-            for sugestao in sugestoes:
-                s = normalizar(sugestao)
-
-                if "cabeca" in s:
-                    adicionar_sem_duplicar(
-                        resultado["[LUKA] C2 — Gol de Cabeça | Jogos para procurar"],
-                        f"{emoji_jogador} {jogo_txt} — olhar {sugestao}"
-                    )
-
-                elif "fora da area" in s:
-                    adicionar_sem_duplicar(
-                        resultado["[LUKA] C3 — Gol de Fora da Área | Jogos para procurar"],
-                        f"{emoji_jogador} {jogo_txt} — olhar {sugestao}"
-                    )
-
-                elif "assistencia" in s and "marcar" in s:
-                    adicionar_sem_duplicar(
-                        resultado["[LUKA] C1 — Criador + Finalizador"],
-                        f"{emoji_jogador} {jogo_txt} — olhar {sugestao}"
-                    )
-
         # ====================================================
         # LUKA C2 / C3 — CABEÇA E FORA DA ÁREA POR PERFIL
         # ====================================================
@@ -2034,6 +2341,27 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None, ranking
         if favorito_odd and favorito_odd["odd"] <= 2.50:
             if favorito_odd["time"] not in times_no_jogo:
                 times_no_jogo.append(favorito_odd["time"])
+
+        # ====================================================
+        # LUKA C9 — GOLS E ASSISTÊNCIAS COM ELENCO ATUALIZADO
+        # ====================================================
+
+        for lado, time_c9, adversario_c9 in [
+            ("home", casa, visitante),
+            ("away", visitante, casa),
+        ]:
+            if not eh_time_prioritario_c9(time_c9):
+                continue
+
+            team_id_c9 = id_time(jogo, lado)
+            elenco_c9 = elencos_por_time.get(team_id_c9, [])
+            perfis_c9 = gerar_perfis_c9_time(time_c9, elenco_c9)
+
+            for linha_c9 in montar_linhas_c9(jogo_txt, time_c9, perfis_c9, adversario_c9):
+                adicionar_sem_duplicar(
+                    resultado[linha_c9["categoria"]],
+                    linha_c9["texto"]
+                )
 
         for time_forte in times_no_jogo:
             emoji = prioridade_jogador(time_forte)
@@ -2061,23 +2389,6 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None, ranking
                     resultado["[LUKA] C4 — Roteiro de jogadores | Assistência + gol"],
                     f"{emoji} {jogo_txt} — procurar {time_forte}: criador assistência + atacante marcar; se jogo aberto, procurar também {adversario}: criador assistência + atacante marcar"
                 )
-
-        # ====================================================
-        # LUKA D — BUILDER FAVORITO
-        # ====================================================
-
-        for time_forte in times_no_jogo:
-            emoji = prioridade_jogador(time_forte)
-
-            detalhe = "montar builder: jogador 1+ chute no alvo + time mais chutes/chutes ao gol/escanteios"
-            if eh_jogo_equilibrado(casa, visitante):
-                detalhe = "builder leve: jogador 1+ chute no alvo + domínio, evitar exagerar porque é clássico/equilibrado"
-
-            adicionar_sem_duplicar(
-                resultado["[LUKA] D — Builder Favorito | Chute no alvo + domínio"],
-                f"{emoji} {jogo_txt} — {time_forte}: {detalhe}"
-            )
-
         # ====================================================
         # LUKA E1 — RESULTADO FINAL FAVORITO
         # ====================================================
@@ -2112,113 +2423,6 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None, ranking
                 resultado["[LUKA] E2 — Resultado Final | Empate candidato"],
                 f"⚠️ {jogo_txt} — olhar empate seco se odd 3.00+"
             )
-
-        # ====================================================
-        # FAIXA VIP H — DOMÍNIO ESTATÍSTICO 1T
-        # ====================================================
-
-        if eh_liga_para_dominio_1t(liga, pais):
-            if favorito_odd:
-                time_odd = favorito_odd["time"]
-                adversario_odd = favorito_odd["adversario"]
-                odd_fav = favorito_odd["odd"]
-                emoji_odd = emoji_por_odd_favorito(odd_fav)
-                faixa_odd = faixa_por_odd_favorito(odd_fav)
-
-                if odd_fav <= 2.50:
-                    adicionar_sem_duplicar(
-                        resultado["[FAIXA VIP] H0 — Favorito por odd | Modelo aberto"],
-                        f"{emoji_odd} {jogo_txt} — favorito por odd: {time_odd} @{odd_fav:.2f} ({faixa_odd}); olhar {linhas_h_por_odd(time_odd, adversario_odd, odd_fav)}"
-                    )
-
-                if odd_fav <= 2.10:
-                    adicionar_sem_duplicar(
-                        resultado["[FAIXA VIP] H1 — Domínio estatístico 1T | Chutes + escanteios"],
-                        f"{emoji_odd} {jogo_txt} — por odd: {time_odd} @{odd_fav:.2f}; olhar {linhas_h_por_odd(time_odd, adversario_odd, odd_fav)}"
-                    )
-
-                    adicionar_sem_duplicar(
-                        resultado["[FAIXA VIP] H2 — Domínio 1T agressivo | Inclui chutes ao gol"],
-                        f"{emoji_odd} {jogo_txt} — por odd: H1 + olhar {linha_h2_por_odd(time_odd, adversario_odd, odd_fav)}"
-                    )
-
-                if odd_fav <= 2.10:
-                    adicionar_sem_duplicar(
-                        resultado["[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T"],
-                        f"{emoji_odd} {jogo_txt} — por odd: {linhas_h21_por_odd(time_odd, adversario_odd, odd_fav)}"
-                    )
-
-                if favorito_odd["lado"] == "home":
-                    linha_stats = montar_linha_h_stats(time_odd, adversario_odd, medias_home, medias_away)
-                else:
-                    linha_stats = montar_linha_h_stats(time_odd, adversario_odd, medias_away, medias_home)
-
-                if linha_stats:
-                    adicionar_sem_duplicar(
-                        resultado["[FAIXA VIP] H_STATS — Médias reais | chutes e escanteios"],
-                        f"{emoji_odd} {jogo_txt} — {linha_stats}"
-                    )
-            else:
-                adicionar_sem_duplicar(
-                    resultado["[FAIXA VIP] H0 — Modelo aberto | Ler favorito no app"],
-                    f"🧪 {jogo_txt} — sem odd na API; {linhas_modelo_print_aberto(casa, visitante)}"
-                )
-
-            # Mandante dominante
-            if eh_time_dominio_1t(casa):
-                emoji = prioridade_dominio_1t(casa, liga, pais)
-                linhas = linhas_dominio_1t(casa, visitante)
-
-                adicionar_sem_duplicar(
-                    resultado["[FAIXA VIP] H1 — Domínio estatístico 1T | Chutes + escanteios"],
-                    f"{emoji} {jogo_txt} — olhar {linhas}"
-                )
-
-                adicionar_sem_duplicar(
-                    resultado["[FAIXA VIP] H2 — Domínio 1T agressivo | Inclui chutes ao gol"],
-                    f"{emoji} {jogo_txt} — H1 + olhar {linha_chutes_gol_1t(casa, visitante)}"
-                )
-
-                if deve_sugerir_modelo_print_h2(casa, visitante):
-                    adicionar_sem_duplicar(
-                        resultado["[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T"],
-                        f"{emoji} {jogo_txt} — modelo print Faixa VIP: {linhas_modelo_print_h2(casa, visitante)}"
-                    )
-
-            # Visitante dominante
-            if eh_time_dominio_1t(visitante):
-                emoji = prioridade_dominio_1t(visitante, liga, pais)
-                linhas = linhas_dominio_1t(visitante, casa)
-
-                adicionar_sem_duplicar(
-                    resultado["[FAIXA VIP] H1 — Domínio estatístico 1T | Chutes + escanteios"],
-                    f"{emoji} {jogo_txt} — olhar {linhas}"
-                )
-
-                adicionar_sem_duplicar(
-                    resultado["[FAIXA VIP] H2 — Domínio 1T agressivo | Inclui chutes ao gol"],
-                    f"{emoji} {jogo_txt} — H1 + olhar {linha_chutes_gol_1t(visitante, casa)}"
-                )
-
-                if deve_sugerir_modelo_print_h2(visitante, casa):
-                    adicionar_sem_duplicar(
-                        resultado["[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T"],
-                        f"{emoji} {jogo_txt} — modelo print Faixa VIP: {linhas_modelo_print_h2(visitante, casa)}"
-                    )
-
-                if not eh_favorito_resultado(visitante) or eh_jogo_equilibrado(casa, visitante):
-                    adicionar_sem_duplicar(
-                        resultado["[FAIXA VIP] H3 — Domínio 1T invertido | Visitante/zebra pressionando"],
-                        f"⚠️ {jogo_txt} — visitante pode dominar 1T: {linhas}"
-                    )
-
-            # Jogo equilibrado com possibilidade de mercado invertido
-            if eh_jogo_equilibrado(casa, visitante):
-                adicionar_sem_duplicar(
-                    resultado["[FAIXA VIP] H3 — Domínio 1T invertido | Visitante/zebra pressionando"],
-                    f"🧪 {jogo_txt} — conferir se a bet oferece domínio 1T do lado com linhas menores; buscar over chutes/escanteios do time que começa melhor"
-                )
-
         # ====================================================
         # FAIXA VIP G7 — RESULTADO + AMBOS MARCAM
         # ====================================================
@@ -2260,7 +2464,7 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None, ranking
                 )
 
         # ====================================================
-        # FAIXA VIP C7 / C8 — CHUTES E ASSISTÊNCIAS
+        # FAIXA VIP C8 — ASSISTÊNCIAS / BOLA PARADA
         # ====================================================
 
         for time_forte in times_no_jogo:
@@ -2268,21 +2472,18 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None, ranking
             ranking_time = escolher_rank_do_time(time_forte, casa, visitante, rank_home, rank_away)
 
             adicionar_sem_duplicar(
-                resultado["[FAIXA VIP] C7 — Chutes de jogadores | Procurar linhas"],
                 f"{emoji} {jogo_txt} — procurar 2-3 jogadores do {time_forte} com +1.5/+2.5 chutes; priorizar atacantes, pontas, meia finalizador e batedor de falta"
             )
 
             top_sot = formatar_top_sot(ranking_time)
             if top_sot:
                 adicionar_sem_duplicar(
-                    resultado["[FAIXA VIP] C7.1 — Jogador 1+ chute no alvo | ranking real"],
                     f"{emoji} {jogo_txt} — {time_forte}: {top_sot}"
                 )
 
             top_chutes = formatar_top_chutes(ranking_time)
             if top_chutes:
                 adicionar_sem_duplicar(
-                    resultado["[FAIXA VIP] C7.2 — Jogador +1.5/+2.5 chutes | ranking real"],
                     f"{emoji} {jogo_txt} — {time_forte}: {top_chutes}"
                 )
 
@@ -2336,7 +2537,6 @@ def limitar_lista(dados):
         "[LUKA] A1 — Cantos 10 min | Mandante forte": 5,
         "[LUKA] A2 — Cantos 10 min | Visitante favorito": 5,
 
-        "[LUKA] B1 — Cartões 1T | Ambos +0 cartão": 18,
         "[LUKA] B4 — Cartões FT por time | +2/+3 cartões": 14,
         "[LUKA] B5 — Cartões individuais | Clássico/jogo quente": 8,
         "[FAIXA VIP] B_STATS — Médias reais | cartões FT e 2T": 12,
@@ -2344,26 +2544,16 @@ def limitar_lista(dados):
         "[LUKA] C1 — Criador + Finalizador": 6,
         "[LUKA] C2 — Gol de Cabeça | Jogos para procurar": 8,
         "[LUKA] C3 — Gol de Fora da Área | Jogos para procurar": 8,
-        "[LUKA] C4 — Roteiro de jogadores | Assistência + gol": 6,
-
-        "[LUKA] D — Builder Favorito | Chute no alvo + domínio": 10,
+        "[LUKA] C4 — Roteiro de jogadores | Assistência + gol": 10,
+        "[LUKA] C9 — Gols e assistências | elenco atualizado": 12,
+        "[LUKA] C9.1 — Odd 20–60 | roteiro agressivo": 8,
 
         "[LUKA] E1 — Resultado Final | Favoritos para vencer": 8,
         "[LUKA] E2 — Resultado Final | Empate candidato": 6,
 
         # FAIXA VIP
-        "[FAIXA VIP] H0 — Favorito por odd | Modelo aberto": 18,
-        "[FAIXA VIP] H0 — Modelo aberto | Ler favorito no app": 12,
-        "[FAIXA VIP] H1 — Domínio estatístico 1T | Chutes + escanteios": 10,
-        "[FAIXA VIP] H2 — Domínio 1T agressivo | Inclui chutes ao gol": 8,
-        "[FAIXA VIP] H2.1 — Modelo print | 5 linhas domínio 1T": 12,
-        "[FAIXA VIP] H_STATS — Médias reais | chutes e escanteios": 10,
-        "[FAIXA VIP] H3 — Domínio 1T invertido | Visitante/zebra pressionando": 6,
         "[FAIXA VIP] G7 — Resultado final + ambos marcam": 10,
         "[FAIXA VIP] G7.2 — Zebra/visitante vencer + ambos marcam": 14,
-        "[FAIXA VIP] C7 — Chutes de jogadores | Procurar linhas": 8,
-        "[FAIXA VIP] C7.1 — Jogador 1+ chute no alvo | ranking real": 10,
-        "[FAIXA VIP] C7.2 — Jogador +1.5/+2.5 chutes | ranking real": 10,
         "[FAIXA VIP] C8 — Assistências | Escanteio/falta/lateral": 10,
         "[FAIXA VIP] C8.1 — Assistências reais | passes-chave/assists": 10,
         "[LUKA] C5 — Assistência de bola parada | escanteio/falta/lateral": 8,
@@ -2396,10 +2586,11 @@ if __name__ == "__main__":
     odds_por_fixture = buscar_odds_hoje()
     medias_por_time = buscar_medias_times_do_dia(jogos, odds_por_fixture)
     rankings_por_time = buscar_rank_jogadores_times_do_dia(jogos, odds_por_fixture)
+    elencos_por_time = buscar_elencos_prioritarios_do_dia(jogos)
 
     if not jogos:
         print("Nenhum jogo encontrado.")
     else:
-        candidatos = gerar_candidatos(jogos, odds_por_fixture, medias_por_time, rankings_por_time)
+        candidatos = gerar_candidatos(jogos, odds_por_fixture, medias_por_time, rankings_por_time, elencos_por_time)
         candidatos = limitar_lista(candidatos)
         salvar_jogos_json(candidatos)
