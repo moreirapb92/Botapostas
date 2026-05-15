@@ -2472,22 +2472,6 @@ def gerar_candidatos(jogos, odds_por_fixture=None, medias_por_time=None, ranking
             ranking_time = escolher_rank_do_time(time_forte, casa, visitante, rank_home, rank_away)
 
             adicionar_sem_duplicar(
-                f"{emoji} {jogo_txt} — procurar 2-3 jogadores do {time_forte} com +1.5/+2.5 chutes; priorizar atacantes, pontas, meia finalizador e batedor de falta"
-            )
-
-            top_sot = formatar_top_sot(ranking_time)
-            if top_sot:
-                adicionar_sem_duplicar(
-                    f"{emoji} {jogo_txt} — {time_forte}: {top_sot}"
-                )
-
-            top_chutes = formatar_top_chutes(ranking_time)
-            if top_chutes:
-                adicionar_sem_duplicar(
-                    f"{emoji} {jogo_txt} — {time_forte}: {top_chutes}"
-                )
-
-            adicionar_sem_duplicar(
                 resultado["[FAIXA VIP] C8 — Assistências | Escanteio/falta/lateral"],
                 f"{emoji} {jogo_txt} — {time_forte}: {sugestao_assistencia_time(time_forte)}"
             )
