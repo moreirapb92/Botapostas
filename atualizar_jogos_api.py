@@ -469,15 +469,49 @@ JOGADORES_PERFIL_C9 = {
 SQUAD_CACHE = {}
 
 
-AMBIGUOS_C9 = {"inter", "united", "international"}
+AMBIGUOS_C9 = {
+    "inter", "united", "international",
+    "arsenal", "barcelona", "liverpool", "newcastle",
+    "sporting", "racing", "santos"
+}
+
+# Times com nome muito reaproveitado no mundo.
+# Para esses, só aceita nome exato ou alias explícito.
+# Evita:
+# - Arsenal Tula / Arsenal Tivat / Arsenal Sarandi => Arsenal Inglaterra
+# - Barcelona SC => Barcelona Espanha
+# - Liverpool Montevideo => Liverpool Inglaterra
+# - Newcastle Jets => Newcastle United
+ALIASES_EXATOS_C9 = {
+    "arsenal": {"arsenal", "arsenal fc"},
+    "barcelona": {"barcelona", "fc barcelona"},
+    "liverpool": {"liverpool", "liverpool fc"},
+    "newcastle": {"newcastle united", "newcastle"},
+    "inter": {"inter", "inter milan", "internazionale"},
+    "internacional": {"internacional", "sc internacional"},
+    "santos": {"santos", "santos fc"},
+    "racing club": {"racing club"},
+    "sporting cp": {"sporting cp", "sporting lisbon"},
+    "sporting lisbon": {"sporting cp", "sporting lisbon"},
+    "psg": {"psg", "paris saint germain"},
+    "paris saint germain": {"psg", "paris saint germain"},
+    "bayern munich": {"bayern munich", "bayern münchen", "bayern munchen"},
+    "bayern münchen": {"bayern munich", "bayern münchen", "bayern munchen"},
+    "borussia dortmund": {"borussia dortmund", "bvb"},
+    "bvb": {"borussia dortmund", "bvb"},
+    "manchester city": {"manchester city", "man city"},
+    "manchester united": {"manchester united", "man united"},
+    "fc porto": {"fc porto", "porto"},
+    "porto": {"fc porto", "porto"}
+}
 
 
 def match_time_c9(nome_time, referencia):
     """
-    Match mais seguro para times prioritários.
-    Evita falsos positivos:
-    - United x Delhi FC não vira Manchester United
-    - Geylang International não vira Inter/Internacional
+    Match seguro para C9.
+    Regra:
+    - nomes famosos/reaproveitados: só exact alias
+    - outros nomes: exact ou substring por palavra inteira quando o ref é específico
     """
     nome = normalizar(nome_time)
     ref = normalizar(referencia)
@@ -488,13 +522,19 @@ def match_time_c9(nome_time, referencia):
     if nome == ref:
         return True
 
-    # Não usar substring para aliases genéricos.
+    if ref in ALIASES_EXATOS_C9:
+        return nome in ALIASES_EXATOS_C9[ref]
+
     if ref in AMBIGUOS_C9 or nome in AMBIGUOS_C9:
         return False
 
-    # Permite "Club Brugge KV" casar com "Club Brugge",
-    # "FC Porto" casar com "Porto", etc., mas só com palavra inteira.
-    if len(ref) >= 5 and re.search(rf"\b{re.escape(ref)}\b", nome):
+    # Para nomes curtos ou genéricos, não usar substring.
+    if len(ref) < 6:
+        return False
+
+    # Permite apenas referências específicas.
+    # Ex.: "Club Brugge" dentro de "Club Brugge KV".
+    if re.search(rf"\b{re.escape(ref)}\b", nome):
         return True
 
     return False
@@ -668,9 +708,27 @@ def nomes_por_posicao(elenco, posicoes, limite=4):
 
 
 def obter_perfil_time_c9(nome_time):
+    # Match normal
     for ref, perfil in JOGADORES_PERFIL_C9.items():
         if match_time_c9(nome_time, ref):
             return perfil
+
+    # Aliases manuais para perfis com nomes equivalentes
+    aliases_perfil = {
+        "bayern münchen": "Bayern Munich",
+        "bayern munchen": "Bayern Munich",
+        "bvb": "Borussia Dortmund",
+        "fc porto": "FC Porto",
+        "porto": "FC Porto",
+        "psg": "Paris Saint Germain"
+    }
+
+    nome = normalizar(nome_time)
+    alvo = aliases_perfil.get(nome)
+
+    if alvo and alvo in JOGADORES_PERFIL_C9:
+        return JOGADORES_PERFIL_C9[alvo]
+
     return {}
 
 
