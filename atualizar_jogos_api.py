@@ -469,11 +469,40 @@ JOGADORES_PERFIL_C9 = {
 SQUAD_CACHE = {}
 
 
-def eh_time_prioritario_c9(nome_time):
+AMBIGUOS_C9 = {"inter", "united", "international"}
+
+
+def match_time_c9(nome_time, referencia):
+    """
+    Match mais seguro para times prioritários.
+    Evita falsos positivos:
+    - United x Delhi FC não vira Manchester United
+    - Geylang International não vira Inter/Internacional
+    """
     nome = normalizar(nome_time)
+    ref = normalizar(referencia)
+
+    if not nome or not ref:
+        return False
+
+    if nome == ref:
+        return True
+
+    # Não usar substring para aliases genéricos.
+    if ref in AMBIGUOS_C9 or nome in AMBIGUOS_C9:
+        return False
+
+    # Permite "Club Brugge KV" casar com "Club Brugge",
+    # "FC Porto" casar com "Porto", etc., mas só com palavra inteira.
+    if len(ref) >= 5 and re.search(rf"\b{re.escape(ref)}\b", nome):
+        return True
+
+    return False
+
+
+def eh_time_prioritario_c9(nome_time):
     for referencia in TIMES_PRIORITARIOS_C9:
-        ref = normalizar(referencia)
-        if nome == ref or ref in nome or nome in ref:
+        if match_time_c9(nome_time, referencia):
             return True
     return False
 
@@ -531,36 +560,116 @@ def buscar_elencos_prioritarios_do_dia(jogos):
     return elencos
 
 
-def nome_em_elenco(nome, elenco):
-    if not nome or not elenco:
+def mesmo_jogador_c9(a, b):
+    """
+    Considera apelido/nome completo como o mesmo jogador.
+    Ex.: "Watkins" e "Ollie Watkins"; "Salah" e "Mohamed Salah".
+    """
+    a_n = normalizar(a)
+    b_n = normalizar(b)
+
+    if not a_n or not b_n:
         return False
+
+    if a_n == b_n:
+        return True
+
+    return (
+        re.search(rf"\b{re.escape(a_n)}\b", b_n) is not None
+        or re.search(rf"\b{re.escape(b_n)}\b", a_n) is not None
+    )
+
+
+def melhor_nome_c9(a, b):
+    """
+    Mantém o nome mais completo.
+    """
+    if not a:
+        return b
+    if not b:
+        return a
+    return a if len(a) >= len(b) else b
+
+
+def deduplicar_nomes_c9(nomes, limite=None):
+    saida = []
+
+    for nome in nomes:
+        if not nome:
+            continue
+
+        nome = str(nome).strip()
+        if not nome:
+            continue
+
+        substituiu = False
+        ja_existe = False
+
+        for i, existente in enumerate(saida):
+            if mesmo_jogador_c9(nome, existente):
+                melhor = melhor_nome_c9(nome, existente)
+                saida[i] = melhor
+                substituiu = True
+                ja_existe = True
+                break
+
+        if not ja_existe and not substituiu:
+            saida.append(nome)
+
+        if limite and len(saida) >= limite:
+            break
+
+    return saida
+
+
+def nome_match_elenco_c9(nome, elenco):
+    """
+    Se o apelido/manual casar com o elenco, retorna o nome oficial do elenco.
+    """
+    if not nome or not elenco:
+        return None
+
     n = normalizar(nome)
+
     for jogador in elenco:
-        j = normalizar(jogador.get("name", ""))
+        oficial = jogador.get("name", "")
+        j = normalizar(oficial)
+
         if not j:
             continue
-        if n == j or n in j or j in n:
-            return True
-    return False
+
+        if n == j or re.search(rf"\b{re.escape(n)}\b", j) or re.search(rf"\b{re.escape(j)}\b", n):
+            return oficial
+
+    return None
+
+
+def nome_em_elenco(nome, elenco):
+    return nome_match_elenco_c9(nome, elenco) is not None
 
 
 def nomes_por_posicao(elenco, posicoes, limite=4):
     saida = []
     posicoes_n = [normalizar(p) for p in posicoes]
+
     for jogador in elenco:
         pos = normalizar(jogador.get("position", ""))
+
         if any(p in pos for p in posicoes_n):
             nome = jogador.get("name", "")
-            if nome and nome not in saida:
-                saida.append(nome)
+
+            if nome:
+                saida = deduplicar_nomes_c9(saida + [nome], limite)
+
         if len(saida) >= limite:
             break
+
     return saida
 
 
 def obter_perfil_time_c9(nome_time):
     for ref, perfil in JOGADORES_PERFIL_C9.items():
-        if eh_time_exato(nome_time, ref) or normalizar(ref) in normalizar(nome_time) or normalizar(nome_time) in normalizar(ref):
+        if match_time_c9(nome_time, ref):
             return perfil
     return {}
 
@@ -568,27 +677,30 @@ def obter_perfil_time_c9(nome_time):
 def filtrar_lista_por_elenco(lista, elenco, limite=4):
     if not lista:
         return []
+
+    lista_limpa = deduplicar_nomes_c9(lista)
+
     if not elenco:
-        # Fallback: API não devolveu elenco; mandar poucos nomes e marcar no texto como conferência obrigatória.
-        return lista[:limite]
+        # Fallback: API não devolveu elenco; mandar poucos nomes,
+        # já sem apelido duplicado, e marcar no texto como conferência obrigatória.
+        return deduplicar_nomes_c9(lista_limpa, limite)
 
     filtrados = []
-    for nome in lista:
-        if nome_em_elenco(nome, elenco) and nome not in filtrados:
-            filtrados.append(nome)
+
+    for nome in lista_limpa:
+        nome_oficial = nome_match_elenco_c9(nome, elenco)
+
+        if nome_oficial:
+            filtrados = deduplicar_nomes_c9(filtrados + [nome_oficial], limite)
+
         if len(filtrados) >= limite:
             break
+
     return filtrados
 
 
 def juntar_opcoes(opcoes, limite=3):
-    limpas = []
-    for item in opcoes:
-        if item and item not in limpas:
-            limpas.append(item)
-        if len(limpas) >= limite:
-            break
-    return limpas
+    return deduplicar_nomes_c9(opcoes, limite)
 
 
 def gerar_perfis_c9_time(nome_time, elenco):
@@ -643,14 +755,33 @@ def montar_linhas_c9(jogo_txt, nome_time, perfis, adversario=None):
             )
         })
 
-    if marcadores and assistencias and len(marcadores) >= 2:
-        linhas.append({
-            "categoria": "[LUKA] C9.1 — Odd 20–60 | roteiro agressivo",
-            "texto": (
-                f"🧪 {jogo_txt} — odd alta controlada: {marcadores[0]} marcar + "
-                f"{marcadores[1]} marcar + {assistencias[0]} assistência; stake R$0,25/R$0,50"
+    marcadores_distintos = deduplicar_nomes_c9(marcadores)
+    assistencias_distintas = [
+        a for a in deduplicar_nomes_c9(assistencias)
+        if not any(mesmo_jogador_c9(a, m) for m in marcadores_distintos[:2])
+    ]
+
+    if marcadores_distintos and assistencias_distintas:
+        if len(marcadores_distintos) >= 2:
+            roteiro = (
+                f"{marcadores_distintos[0]} marcar + "
+                f"{marcadores_distintos[1]} marcar + "
+                f"{assistencias_distintas[0]} assistência"
             )
-        })
+        elif len(assistencias_distintas) >= 2:
+            roteiro = (
+                f"{marcadores_distintos[0]} marcar + "
+                f"{assistencias_distintas[0]} assistência + "
+                f"{assistencias_distintas[1]} assistência"
+            )
+        else:
+            roteiro = ""
+
+        if roteiro:
+            linhas.append({
+                "categoria": "[LUKA] C9.1 — Odd 20–60 | roteiro agressivo",
+                "texto": f"🧪 {jogo_txt} — odd alta controlada: {roteiro}; stake R$0,25/R$0,50"
+            })
 
     if cabeca:
         base_assist = assistencias[0] if assistencias else "batedor de escanteio/falta"
